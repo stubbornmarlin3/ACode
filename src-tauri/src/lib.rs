@@ -533,6 +533,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_os::init())
         .manage(Arc::new(TerminalState::default()))
         .manage(Arc::new(ClaudeState::default()))
         .invoke_handler(tauri::generate_handler![
@@ -560,12 +561,14 @@ pub fn run() {
                     .expect("Failed to apply vibrancy");
             }
 
-            // Windows: apply acrylic blur
+            // Windows: apply acrylic blur and remove native decorations
+            // (custom window controls are rendered in the frontend)
             #[cfg(target_os = "windows")]
             {
                 use window_vibrancy::apply_acrylic;
                 apply_acrylic(&window, Some((10, 15, 22, 200)))
                     .expect("Failed to apply acrylic");
+                window.set_decorations(false).unwrap();
             }
 
             Ok(())

@@ -29,11 +29,14 @@ export function Terminal() {
       fontSize: 13,
       lineHeight: 1.4,
       cursorBlink: false,
+      cursorStyle: "bar",
+      cursorWidth: 1,
+      cursorInactiveStyle: "none",
       disableStdin: true,
       theme: {
-        background: "transparent",
+        background: "rgba(0, 0, 0, 0)",
         foreground: "#e8edf2",
-        cursor: "transparent",
+        cursor: "rgba(0, 0, 0, 0)",
         selectionBackground: "rgba(59, 130, 246, 0.3)",
         black: "#0a0f16",
         red: "#ef4444",
@@ -59,6 +62,7 @@ export function Terminal() {
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     xterm.open(containerRef.current);
+    xterm.write("\x1b[?25l"); // hide cursor
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;

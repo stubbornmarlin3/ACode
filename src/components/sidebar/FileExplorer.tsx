@@ -83,7 +83,7 @@ export function FileExplorer() {
   return (
     <div className="file-explorer">
       <div className="file-explorer__header">
-        {workspaceRoot.split("/").pop()?.toUpperCase()}
+        {workspaceRoot.split(/[\\/]/).pop()?.toUpperCase()}
       </div>
       <div className="file-explorer__tree">
         {fileTree.map((entry) => (

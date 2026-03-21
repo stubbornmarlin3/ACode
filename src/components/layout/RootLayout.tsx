@@ -1,5 +1,6 @@
 import "./RootLayout.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { platform } from "@tauri-apps/plugin-os";
 import { PanelLeftClose, PanelLeftOpen, FolderOpen } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useLayoutStore } from "../../store/layoutStore";
@@ -9,22 +10,17 @@ import { ProjectsRail } from "../projects/ProjectsRail";
 import { PillBar } from "../pillbar/PillBar";
 import { EditorTabBar } from "../editor/EditorTabBar";
 import { EditorPane } from "../editor/EditorPane";
+import { WindowControls } from "./WindowControls";
 
-let dragTimeout: ReturnType<typeof setTimeout> | null = null;
+const isMacos = platform() === "macos";
 
 const handleDragStart = (e: React.MouseEvent) => {
   e.preventDefault();
-  if (e.detail >= 2) return; // double-click, skip drag
-  dragTimeout = setTimeout(() => {
-    getCurrentWindow().startDragging();
-  }, 150);
+  if (e.detail >= 2) return;
+  getCurrentWindow().startDragging();
 };
 
-const handleTitlebarDoubleClick = () => {
-  if (dragTimeout) {
-    clearTimeout(dragTimeout);
-    dragTimeout = null;
-  }
+const handleDoubleClick = () => {
   const win = getCurrentWindow();
   win.isMaximized().then((maximized) => {
     maximized ? win.unmaximize() : win.maximize();
@@ -39,7 +35,7 @@ function WelcomeScreen() {
   const handleOpen = async () => {
     const selected = await open({ directory: true, multiple: false });
     if (!selected) return;
-    const name = selected.split("/").pop() ?? selected;
+    const name = selected.split(/[\\/]/).pop() ?? selected;
     const id = selected;
     addProject({ id, name, path: selected });
     setActiveProject(id);
@@ -47,7 +43,7 @@ function WelcomeScreen() {
   };
 
   return (
-    <div className="welcome-screen" onMouseDown={handleDragStart} onDoubleClick={handleTitlebarDoubleClick}>
+    <div className="welcome-screen" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
       <button className="welcome-screen__btn" onClick={handleOpen} onMouseDown={(e) => e.stopPropagation()}>
         <FolderOpen size={20} />
         Open Project
@@ -64,17 +60,19 @@ export function RootLayout() {
 
   if (!hasProject) {
     return (
-      <div className="root-layout root-layout--no-project" onMouseDown={handleDragStart} onDoubleClick={handleTitlebarDoubleClick}>
+      <div className="root-layout root-layout--no-project" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
+        <WindowControls />
         <WelcomeScreen />
       </div>
     );
   }
 
   return (
-    <div className={`root-layout ${isSidebarOpen ? "" : "root-layout--sidebar-closed"}`}>
-      {isSidebarOpen && <Sidebar onDrag={handleDragStart} onDoubleClick={handleTitlebarDoubleClick} />}
+    <div className={`root-layout${isMacos ? " root-layout--macos" : ""}${isSidebarOpen ? "" : " root-layout--sidebar-closed"}`}>
+      <WindowControls />
+      {isSidebarOpen && <Sidebar onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />}
       <div className="root-layout__center">
-        <div className="root-layout__titlebar" onMouseDown={handleDragStart} onDoubleClick={handleTitlebarDoubleClick}>
+        <div className="root-layout__titlebar" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
           <button className="root-layout__sidebar-toggle" onClick={toggleSidebar} onMouseDown={(e) => e.stopPropagation()}>
             {isSidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           </button>
@@ -86,7 +84,7 @@ export function RootLayout() {
           <EditorPane />
         </div>
       </div>
-      <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleTitlebarDoubleClick} />
+      <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
     </div>
   );
 }

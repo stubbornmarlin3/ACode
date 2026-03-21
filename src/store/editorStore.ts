@@ -1,5 +1,8 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { useLayoutStore, type PillMode, type PillBarState } from "./layoutStore";
+import { useTerminalStore } from "./terminalStore";
+import { useClaudeStore } from "./claudeStore";
 
 export interface FileEntry {
   name: string;
@@ -15,11 +18,22 @@ export interface OpenFile {
   isDirty: boolean;
 }
 
+interface ProjectEditorState {
+  fileTree: FileEntry[];
+  openFiles: OpenFile[];
+  activeFilePath: string | null;
+  pillMode: PillMode;
+  pillBarState: PillBarState;
+  terminalShowingOutput: boolean;
+  claudeShowingOutput: boolean;
+}
+
 interface EditorStore {
   workspaceRoot: string | null;
   fileTree: FileEntry[];
   openFiles: OpenFile[];
   activeFilePath: string | null;
+  projectStates: Record<string, ProjectEditorState>;
 
   setWorkspaceRoot: (path: string) => Promise<void>;
   openFile: (path: string, name: string) => Promise<void>;
@@ -54,13 +68,65 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   fileTree: [],
   openFiles: [],
   activeFilePath: null,
+  projectStates: {},
 
   setWorkspaceRoot: async (path) => {
-    const tree = await invoke<FileEntry[]>("read_dir_tree", {
-      path,
-      maxDepth: 2,
-    });
-    set({ workspaceRoot: path, fileTree: tree, openFiles: [], activeFilePath: null });
+    const { workspaceRoot, fileTree, openFiles, activeFilePath, projectStates } = get();
+
+    const layoutState = useLayoutStore.getState();
+    const terminalState = useTerminalStore.getState();
+    const claudeState = useClaudeStore.getState();
+
+    // Save current project state before switching
+    let nextProjectStates = projectStates;
+    if (workspaceRoot && workspaceRoot !== path) {
+      nextProjectStates = {
+        ...projectStates,
+        [workspaceRoot]: {
+          fileTree,
+          openFiles,
+          activeFilePath,
+          pillMode: layoutState.pillBar.mode,
+          pillBarState: layoutState.pillBar.state,
+          terminalShowingOutput: terminalState.showingOutput,
+          claudeShowingOutput: claudeState.showingOutput,
+        },
+      };
+    }
+
+    // Restore cached state or load fresh
+    const cached = nextProjectStates[path];
+    if (cached) {
+      set({
+        workspaceRoot: path,
+        fileTree: cached.fileTree,
+        openFiles: cached.openFiles,
+        activeFilePath: cached.activeFilePath,
+        projectStates: nextProjectStates,
+      });
+      useLayoutStore.setState({
+        pillBar: { mode: cached.pillMode, state: cached.pillBarState },
+      });
+      useTerminalStore.setState({ showingOutput: cached.terminalShowingOutput });
+      useClaudeStore.setState({ showingOutput: cached.claudeShowingOutput });
+    } else {
+      const tree = await invoke<FileEntry[]>("read_dir_tree", {
+        path,
+        maxDepth: 2,
+      });
+      set({
+        workspaceRoot: path,
+        fileTree: tree,
+        openFiles: [],
+        activeFilePath: null,
+        projectStates: nextProjectStates,
+      });
+      useLayoutStore.setState({
+        pillBar: { mode: "terminal", state: "idle" },
+      });
+      useTerminalStore.setState({ showingOutput: false });
+      useClaudeStore.setState({ showingOutput: false });
+    }
   },
 
   openFile: async (path, name) => {

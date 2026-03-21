@@ -8,12 +8,19 @@
 .terminal-container .xterm {
   height: 100%;
   padding: var(--spacing-2) var(--spacing-3);
+  background: transparent !important;
 }
 
 .terminal-container .xterm-viewport {
   background: transparent !important;
+  overflow-y: hidden !important;
 }
 
 .terminal-container .xterm-screen {
   height: 100%;
+  background: transparent !important;
+}
+
+.terminal-container .xterm-cursor-layer {
+  display: none !important;
 }

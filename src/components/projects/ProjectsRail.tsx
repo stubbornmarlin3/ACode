@@ -19,7 +19,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     const selected = await open({ directory: true, multiple: false });
     if (!selected) return;
 
-    const name = selected.split("/").pop() ?? selected;
+    const name = selected.split(/[\\/]/).pop() ?? selected;
     const id = selected;
 
     // Check if already added
