@@ -70,3 +70,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.file-tree-item--editing {
+  background: var(--bg-glass-surface);
+}
+
+.file-tree-item__rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-blue);
+  border-radius: 3px;
+  outline: none;
+}

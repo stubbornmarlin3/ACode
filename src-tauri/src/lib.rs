@@ -1,3 +1,5 @@
+mod git;
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -56,6 +58,124 @@ fn read_dir_recursive(dir: &Path, depth: u32, max_depth: u32) -> Vec<FileEntry> 
         });
     }
     entries
+}
+
+#[tauri::command]
+fn save_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
+#[tauri::command]
+fn create_file(path: String) -> Result<(), String> {
+    if Path::new(&path).exists() {
+        return Err(format!("Already exists: {}", path));
+    }
+    fs::write(&path, "").map_err(|e| format!("Failed to create file: {}", e))
+}
+
+#[tauri::command]
+fn create_dir(path: String) -> Result<(), String> {
+    if Path::new(&path).exists() {
+        return Err(format!("Already exists: {}", path));
+    }
+    fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))
+}
+
+#[tauri::command]
+fn delete_path(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if p.is_dir() {
+        fs::remove_dir_all(p).map_err(|e| format!("Failed to delete: {}", e))
+    } else {
+        fs::remove_file(p).map_err(|e| format!("Failed to delete: {}", e))
+    }
+}
+
+#[tauri::command]
+fn rename_path(old_path: String, new_path: String) -> Result<(), String> {
+    fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename: {}", e))
+}
+
+#[tauri::command]
+fn reveal_in_explorer(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to reveal: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to reveal: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(dir.to_string_lossy().to_string())
+            .spawn()
+            .map_err(|e| format!("Failed to reveal: {}", e))?;
+    }
+
+    let _ = dir; // suppress unused warning on non-linux
+    Ok(())
+}
+
+#[tauri::command]
+fn open_in_terminal(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    let dir = if p.is_dir() { p.to_path_buf() } else { p.parent().unwrap_or(p).to_path_buf() };
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "cmd", "/k", &format!("cd /d \"{}\"", dir.display())])
+            .spawn()
+            .map_err(|e| format!("Failed to open terminal: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .arg(dir.to_string_lossy().to_string())
+            .spawn()
+            .map_err(|e| format!("Failed to open terminal: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try common terminal emulators
+        let terminals = ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"];
+        let mut launched = false;
+        for term in terminals {
+            if std::process::Command::new(term)
+                .arg("--working-directory")
+                .arg(dir.to_string_lossy().to_string())
+                .spawn()
+                .is_ok()
+            {
+                launched = true;
+                break;
+            }
+        }
+        if !launched {
+            return Err("No terminal emulator found".into());
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -536,10 +656,18 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .manage(Arc::new(TerminalState::default()))
         .manage(Arc::new(ClaudeState::default()))
+        .manage(Arc::new(git::github::GitHubState::default()))
         .invoke_handler(tauri::generate_handler![
             read_dir_tree,
             read_file_contents,
             expand_dir,
+            save_file,
+            create_file,
+            create_dir,
+            delete_path,
+            rename_path,
+            reveal_in_explorer,
+            open_in_terminal,
             spawn_terminal,
             write_terminal,
             resize_terminal,
@@ -549,6 +677,36 @@ pub fn run() {
             write_claude,
             interrupt_claude,
             kill_claude,
+            git::local::git_init,
+            git::local::git_clone,
+            git::local::git_status,
+            git::local::git_stage,
+            git::local::git_unstage,
+            git::local::git_commit,
+            git::local::git_diff,
+            git::local::git_log,
+            git::local::git_branches,
+            git::local::git_checkout,
+            git::local::git_create_branch,
+            git::local::git_discard,
+            git::local::git_push,
+            git::local::git_pull,
+            git::local::git_fetch,
+            git::local::git_remote_info,
+            git::github::github_check_auth,
+            git::github::github_set_token,
+            git::github::github_list_prs,
+            git::github::github_get_pr,
+            git::github::github_pr_files,
+            git::github::github_pr_diff,
+            git::github::github_pr_comments,
+            git::github::github_post_comment,
+            git::github::github_post_review,
+            git::github::github_merge_pr,
+            git::github::github_list_issues,
+            git::github::github_get_issue,
+            git::github::github_post_issue_comment,
+            git::github::github_list_user_repos,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();

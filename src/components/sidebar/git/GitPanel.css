@@ -1,0 +1,396 @@
+.git-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  height: 100%;
+  overflow-y: auto;
+}
+
+.git-panel__empty {
+  color: var(--text-disabled);
+  font-size: 12px;
+  text-align: center;
+  padding: var(--spacing-4);
+}
+
+.git-panel__init {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-6) var(--spacing-4);
+}
+
+.git-panel__init-text {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.git-panel__init-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-1);
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--accent-blue);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 100ms ease;
+  width: 100%;
+}
+
+.git-panel__init-btn:hover {
+  opacity: 0.85;
+}
+
+.git-panel__init-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Branch selector ──────────────────────────────── */
+
+.git-branch-selector {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  position: relative;
+}
+
+.git-branch-selector__left {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.git-branch-selector__current {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  width: 100%;
+  min-width: 0;
+  cursor: pointer;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: left;
+  transition: color 100ms ease;
+}
+
+.git-branch-selector__current:hover {
+  color: var(--accent-blue);
+}
+
+.git-branch-selector__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-branch-selector__dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: -1px;
+  right: -1px;
+  background: var(--bg-menu);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.git-branch-selector__item {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.git-branch-selector__item:hover {
+  background: var(--bg-glass-surface);
+  color: var(--text-primary);
+}
+
+.git-branch-selector__item--active {
+  color: var(--accent-blue);
+}
+
+.git-branch-selector__create {
+  display: flex;
+  gap: var(--spacing-1);
+  padding: 4px 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.git-branch-selector__create-input {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  outline: none;
+}
+
+.git-branch-selector__create-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.git-branch-selector__create-btn {
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.git-branch-selector__create-btn:hover {
+  background: var(--bg-glass);
+}
+
+.git-branch-selector__create-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── 3-dot menu ───────────────────────────────────── */
+
+.git-branch-selector__menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.git-branch-selector__menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 0 6px 6px 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.git-branch-selector__menu-btn:hover {
+  background: var(--bg-glass);
+  color: var(--text-primary);
+}
+
+.git-branch-selector__menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  min-width: 120px;
+  background: var(--bg-menu);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: 6px;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.git-branch-selector__menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.git-branch-selector__menu-item:hover {
+  background: var(--bg-glass-surface);
+  color: var(--text-primary);
+}
+
+/* ── Commit box ───────────────────────────────────── */
+
+.git-commit-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.git-commit-box__input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+  min-height: 28px;
+  max-height: 120px;
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+}
+
+.git-commit-box__input:focus {
+  border-color: var(--accent-blue);
+}
+
+.git-commit-box__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-1);
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--accent-blue);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 100ms ease;
+}
+
+.git-commit-box__btn:hover {
+  opacity: 0.85;
+}
+
+.git-commit-box__btn--sync {
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+.git-commit-box__btn--sync:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-active);
+  opacity: 1;
+}
+
+.git-commit-box__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Status list ──────────────────────────────────── */
+
+.git-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.git-status-list__section {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-status-list__header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 4px 4px 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── File item ────────────────────────────────────── */
+
+.git-file-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.git-file-item:hover {
+  background: var(--bg-elevated);
+}
+
+.git-file-item__status {
+  font-size: 10px;
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.git-file-item__status--modified { color: var(--accent-yellow); }
+.git-file-item__status--added { color: var(--accent-green); }
+.git-file-item__status--deleted { color: var(--accent-red); }
+.git-file-item__status--renamed { color: var(--accent-blue); }
+.git-file-item__status--untracked { color: var(--text-disabled); }
+
+.git-file-item__path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.git-file-item__actions {
+  display: none;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.git-file-item:hover .git-file-item__actions {
+  display: flex;
+}
+
+.git-file-item__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-disabled);
+  cursor: pointer;
+}
+
+.git-file-item__action:hover {
+  background: var(--bg-glass-surface);
+  color: var(--text-primary);
+}

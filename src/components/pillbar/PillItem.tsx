@@ -1,7 +1,8 @@
 import { useRef, useMemo, useEffect } from "react";
-import { Terminal, CornerDownLeft, Plus, Square } from "lucide-react";
+import { Terminal, CornerDownLeft, Plus, Square, Github } from "lucide-react";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { PillMode } from "../../store/layoutStore";
+import { useGitHubStore } from "../../store/githubStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useClaudeStore } from "../../store/claudeStore";
@@ -19,11 +20,13 @@ interface Props {
 const ICONS: Record<PillMode, React.ReactNode> = {
   terminal: <Terminal size={14} />,
   claude: <ClaudeIcon size={14} />,
+  github: <Github size={14} />,
 };
 
 const LABELS: Record<PillMode, { text: string; placeholder: string }> = {
   terminal: { text: "Terminal", placeholder: "Run a command..." },
   claude: { text: "Claude", placeholder: "Ask Claude..." },
+  github: { text: "GitHub", placeholder: "Search PRs and issues..." },
 };
 
 export function PillItem({ mode, isExpanded, onCollapsedClick, onLabelClick }: Props) {
@@ -49,11 +52,23 @@ export function PillItem({ mode, isExpanded, onCollapsedClick, onLabelClick }: P
   const claudeAddUserMessage = useClaudeStore((s) => s.addUserMessage);
   const claudeProcessStreamChunk = useClaudeStore((s) => s.processStreamChunk);
 
+  // GitHub store
+  const githubLastOutputLine = useGitHubStore((s) => s.lastOutputLine);
+  const githubShowingOutput = useGitHubStore((s) => s.showingOutput);
+
   const isTerminal = mode === "terminal";
   const isClaude = mode === "claude";
 
-  const lastOutputLine = isTerminal ? termLastOutputLine : claudeLastOutputLine;
-  const showingOutput = isTerminal ? termShowingOutput : claudeShowingOutput;
+  const lastOutputLine = isTerminal
+    ? termLastOutputLine
+    : isClaude
+      ? claudeLastOutputLine
+      : githubLastOutputLine;
+  const showingOutput = isTerminal
+    ? termShowingOutput
+    : isClaude
+      ? claudeShowingOutput
+      : githubShowingOutput;
   const hasOutput = showingOutput && lastOutputLine;
 
   const outputHtml = useMemo(

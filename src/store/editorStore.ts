@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useLayoutStore, type PillMode, type PillBarState } from "./layoutStore";
 import { useTerminalStore } from "./terminalStore";
 import { useClaudeStore } from "./claudeStore";
+import { useGitStore } from "./gitStore";
 
 export interface FileEntry {
   name: string;
@@ -35,7 +36,7 @@ interface EditorStore {
   activeFilePath: string | null;
   projectStates: Record<string, ProjectEditorState>;
 
-  setWorkspaceRoot: (path: string) => Promise<void>;
+  setWorkspaceRoot: (path: string | null) => Promise<void>;
   openFile: (path: string, name: string) => Promise<void>;
   closeFile: (path: string) => void;
   setActiveFile: (path: string) => void;
@@ -94,6 +95,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       };
     }
 
+    // Clear workspace if path is null (return to launcher)
+    if (path === null) {
+      set({
+        workspaceRoot: null,
+        fileTree: [],
+        openFiles: [],
+        activeFilePath: null,
+        projectStates: nextProjectStates,
+      });
+      useLayoutStore.setState({
+        pillBar: { mode: "terminal", state: "idle" },
+      });
+      useTerminalStore.setState({ showingOutput: false });
+      useClaudeStore.setState({ showingOutput: false });
+      useGitStore.getState().reset();
+      return;
+    }
+
     // Restore cached state or load fresh
     const cached = nextProjectStates[path];
     if (cached) {
@@ -127,6 +146,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       useTerminalStore.setState({ showingOutput: false });
       useClaudeStore.setState({ showingOutput: false });
     }
+
+    // Detect git repo for this workspace
+    useGitStore.getState().refreshStatus(path);
   },
 
   openFile: async (path, name) => {

@@ -2,7 +2,9 @@ import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { listen } from "@tauri-apps/api/event";
+import { Copy, ClipboardPaste, Trash2 } from "lucide-react";
 import { useTerminalStore } from "../../store/terminalStore";
+import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 
@@ -10,6 +12,7 @@ export function Terminal() {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const contextMenu = useContextMenu();
 
   const fitTerminal = useCallback(() => {
     const fitAddon = fitAddonRef.current;
@@ -110,5 +113,51 @@ export function Terminal() {
     };
   }, [fitTerminal]);
 
-  return <div className="terminal-container" ref={containerRef} />;
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const xterm = xtermRef.current;
+      const hasSelection = xterm?.hasSelection() ?? false;
+
+      const items: MenuEntry[] = [
+        {
+          label: "Copy",
+          icon: <Copy size={12} />,
+          shortcut: "Ctrl+C",
+          action: () => {
+            if (xterm && hasSelection) {
+              navigator.clipboard.writeText(xterm.getSelection());
+            }
+          },
+        },
+        {
+          label: "Paste",
+          icon: <ClipboardPaste size={12} />,
+          shortcut: "Ctrl+V",
+          action: () => {
+            // Terminal input is disabled (pill-driven), paste is a no-op
+          },
+        },
+        "separator",
+        {
+          label: "Clear Terminal",
+          icon: <Trash2 size={12} />,
+          action: () => {
+            xterm?.clear();
+          },
+        },
+      ];
+
+      contextMenu.show(e, items);
+    },
+    [contextMenu]
+  );
+
+  return (
+    <>
+      <div className="terminal-container" ref={containerRef} onContextMenu={handleContextMenu} />
+      {contextMenu.menu && (
+        <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />
+      )}
+    </>
+  );
 }

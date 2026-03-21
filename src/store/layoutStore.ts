@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 export type SidebarTab = "explorer" | "git";
-export type PillMode = "terminal" | "claude";
+export type PillMode = "terminal" | "claude" | "github";
 export type PillBarState = "idle" | "hovered" | "panel-open";
 
 export interface Project {
@@ -17,10 +17,11 @@ interface LayoutStore {
 
   setSidebarTab: (tab: SidebarTab) => void;
   toggleSidebar: () => void;
-  swapPillMode: () => void;
+  setPillMode: (mode: PillMode) => void;
   setPillBarState: (state: PillBarState) => void;
-  setActiveProject: (id: string) => void;
+  setActiveProject: (id: string | null) => void;
   addProject: (project: Project) => void;
+  removeProject: (id: string) => void;
 }
 
 export const useLayoutStore = create<LayoutStore>((set) => ({
@@ -34,12 +35,9 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
   toggleSidebar: () =>
     set((s) => ({ sidebar: { ...s.sidebar, isOpen: !s.sidebar.isOpen } })),
 
-  swapPillMode: () =>
+  setPillMode: (mode) =>
     set((s) => ({
-      pillBar: {
-        ...s.pillBar,
-        mode: s.pillBar.mode === "terminal" ? "claude" : "terminal",
-      },
+      pillBar: { ...s.pillBar, mode },
     })),
 
   setPillBarState: (state) =>
@@ -53,6 +51,15 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
       projects: {
         ...s.projects,
         projects: [...s.projects.projects, project],
+      },
+    })),
+
+  removeProject: (id) =>
+    set((s) => ({
+      projects: {
+        ...s.projects,
+        projects: s.projects.projects.filter((p) => p.id !== id),
+        activeProjectId: s.projects.activeProjectId === id ? null : s.projects.activeProjectId,
       },
     })),
 }));
