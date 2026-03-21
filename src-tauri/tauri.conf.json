@@ -13,13 +13,19 @@
     "windows": [
       {
         "title": "acIDE",
-        "width": 800,
-        "height": 600
+        "width": 1200,
+        "height": 800,
+        "transparent": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "dragDropEnabled": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

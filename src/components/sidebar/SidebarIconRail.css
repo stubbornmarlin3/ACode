@@ -1,0 +1,40 @@
+.sidebar-icon-rail {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 4px var(--spacing-3) var(--spacing-2);
+  flex-shrink: 0;
+}
+
+/* Pill container */
+.sidebar-icon-rail__pill {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-icon-rail__btn {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border-radius: 6px;
+  margin: 2px;
+  color: var(--text-disabled);
+  font-size: 12px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.sidebar-icon-rail__btn:hover {
+  color: var(--text-secondary);
+}
+
+.sidebar-icon-rail__btn[aria-selected="true"] {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+}

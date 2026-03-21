@@ -1,0 +1,92 @@
+.projects-rail {
+  grid-area: projects;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  padding-top: 0;
+  padding-bottom: var(--spacing-2);
+  padding-right: 6px;
+  gap: var(--spacing-2);
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: rgba(6, 10, 16, 0.62);
+  border-radius: 0;
+}
+
+.projects-rail__drag-region {
+  width: 100%;
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.projects-rail__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 100ms ease;
+}
+
+.projects-rail__icon:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.08);
+}
+
+.projects-rail__icon--active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  box-shadow: 0 0 0 1px var(--accent-blue);
+}
+
+.projects-rail__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: var(--text-disabled);
+  font-size: 18px;
+  flex-shrink: 0;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.projects-rail__add:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-secondary);
+}
+
+.projects-rail__settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  margin-bottom: var(--spacing-2);
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 100ms ease;
+}
+
+.projects-rail__settings:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.08);
+}

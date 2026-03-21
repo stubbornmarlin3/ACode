@@ -1,0 +1,41 @@
+:root {
+  /* Background */
+  --bg-base: #0a0f16;
+  --bg-panel: #0f1620;
+  --bg-elevated: #141c28;
+  --bg-glass: rgba(255, 255, 255, 0.04);
+  --bg-glass-surface: rgba(255, 255, 255, 0.06);
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(255, 255, 255, 0.14);
+  --border-glass: rgba(255, 255, 255, 0.1);
+
+  /* Text */
+  --text-primary: #e8edf2;
+  --text-secondary: #8b97a6;
+  --text-disabled: #4a5568;
+
+  /* Accents */
+  --accent-blue: #3b82f6;
+  --accent-green: #22c55e;
+  --accent-red: #ef4444;
+  --accent-yellow: #eab308;
+
+  /* Typography */
+  --font-ui: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* Layout */
+  --sidebar-width: 240px;
+  --projects-rail-width: 56px;
+  --tab-bar-height: 36px;
+  --status-bar-height: 24px;
+  --pill-panel-height: 70vh;
+
+  /* Spacing */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+}

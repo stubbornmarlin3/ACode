@@ -1,0 +1,38 @@
+.editor-pane {
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+.editor-pane--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editor-pane__placeholder {
+  color: var(--text-disabled);
+  font-size: 13px;
+}
+
+/* Override CodeMirror defaults for glass container */
+.editor-pane .cm-editor {
+  height: 100%;
+  background: transparent;
+}
+
+.editor-pane .cm-scroller {
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.editor-pane .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.editor-pane .cm-activeLineGutter,
+.editor-pane .cm-activeLine {
+  background: var(--bg-glass);
+}

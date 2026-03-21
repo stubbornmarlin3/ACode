@@ -1,0 +1,223 @@
+.pill-bar {
+  flex-shrink: 0;
+}
+
+.pill-bar__row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+}
+
+/* Pill item — animates between expanded and collapsed */
+.pill-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  min-height: 40px;
+  background: rgba(8, 12, 18, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  transition: flex 250ms ease, width 250ms ease, border-radius 250ms ease,
+    border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.pill-item--expanded {
+  flex: 1;
+  border-radius: 20px;
+  padding: 0;
+  gap: 0;
+}
+
+.pill-item--collapsed {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pill-item--collapsed:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--text-primary);
+  background: rgba(8, 12, 18, 0.72);
+}
+
+.pill-item__icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* ── Left zone: label + icon, toggles panel ── */
+.pill-item__label-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 0 var(--spacing-3) 0 var(--spacing-4);
+  align-self: stretch;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 20px 0 0 20px;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.pill-item__label-zone:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pill-item__label {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ── Divider between zones ── */
+.pill-item__divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 10px 0;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+/* ── Right zone: input or output ── */
+.pill-item__input-zone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--spacing-3);
+  gap: var(--spacing-2);
+  min-width: 0;
+  user-select: none;
+}
+
+.pill-item__input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 0;
+  cursor: text;
+  resize: none;
+  overflow: hidden;
+  field-sizing: content;
+  padding: 10px 0;
+  margin: 0;
+}
+
+.pill-item__input::placeholder {
+  color: var(--text-disabled);
+}
+
+/* Submit button (return arrow) */
+.pill-item__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.pill-item__submit:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Output display in pill ── */
+.pill-item__output {
+  flex: 1;
+  font-family: "JetBrainsMono Nerd Font Mono", "JetBrainsMono Nerd Font", var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+  line-height: 1.4;
+  padding: 10px 0;
+}
+
+/* New prompt button (plus icon) */
+.pill-item__new-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+.pill-item__new-prompt:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.pill-item__stop {
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.pill-item__stop:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* ── Expanded panel ── */
+.pill-panel {
+  height: 0;
+  overflow: hidden;
+  transition: height 200ms ease;
+  border-radius: 12px;
+  margin-top: var(--spacing-1);
+}
+
+.pill-bar[data-pill-state="panel-open"] .pill-panel {
+  height: var(--pill-panel-height);
+}
+
+.pill-panel__content {
+  height: 100%;
+  padding: var(--spacing-3);
+  background: rgba(8, 12, 18, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow-y: auto;
+}
+
+/* Remove padding when terminal is inside — xterm handles its own */
+.pill-panel__content:has(.terminal-container) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.pill-panel__placeholder {
+  color: var(--text-disabled);
+  font-size: 12px;
+  text-align: center;
+  padding-top: var(--spacing-4);
+}

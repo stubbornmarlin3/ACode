@@ -1,5 +1,9 @@
 # acIDE Architecture
 
+## See Also
+
+- [Design System](./design/design-system.md) — color tokens, typography, glassmorphism rules, component patterns
+
 ## Overview
 
 acIDE is a custom cross-platform code editor built on **Tauri 2**. The app is split into two layers that communicate via Tauri's IPC bridge:
