@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Tauri build output (Rust side handled in src-tauri/.gitignore)
+src-tauri/target/
+
+# Vite cache
+.vite/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
