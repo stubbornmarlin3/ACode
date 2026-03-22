@@ -1,4 +1,4 @@
-# Contributing to acIDE
+# Contributing to ACode
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ Before you can run the app, you need:
 ## Setup
 
 ```bash
-git clone https://github.com/arcar/acIDE.git
-cd acIDE
+git clone https://github.com/arcar/ACode.git
+cd ACode
 npm install
 ```
 

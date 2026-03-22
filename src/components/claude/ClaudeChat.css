@@ -49,6 +49,11 @@
   gap: var(--spacing-1);
 }
 
+/* Continuation messages (same role as previous) get tighter spacing */
+.claude-chat__message--continuation {
+  margin-top: calc(-1 * var(--spacing-2));
+}
+
 .claude-chat__role {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -65,22 +70,261 @@
   color: var(--accent-green);
 }
 
+/* ── Content — markdown rendering ── */
 .claude-chat__content {
   font-family: var(--font-mono);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text-primary);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Markdown element resets within content */
+.claude-chat__content p {
+  margin: 0 0 0.5em;
+}
+
+.claude-chat__content p:last-child {
+  margin-bottom: 0;
+}
+
+.claude-chat__content ul,
+.claude-chat__content ol {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+}
+
+.claude-chat__content li {
+  margin: 0.15em 0;
+}
+
+.claude-chat__content h1,
+.claude-chat__content h2,
+.claude-chat__content h3,
+.claude-chat__content h4 {
+  margin: 0.6em 0 0.3em;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.claude-chat__content h1 { font-size: 15px; }
+.claude-chat__content h2 { font-size: 14px; }
+
+.claude-chat__content blockquote {
+  margin: 0.4em 0;
+  padding-left: var(--spacing-2);
+  border-left: 2px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+}
+
+.claude-chat__content table {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 0.4em 0;
+}
+
+.claude-chat__content th,
+.claude-chat__content td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 3px 8px;
+}
+
+.claude-chat__content th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.claude-chat__content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0.6em 0;
+}
+
+.claude-chat__content a {
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+
+.claude-chat__content a:hover {
+  text-decoration: underline;
 }
 
 .claude-chat__message--user .claude-chat__content {
   color: var(--text-secondary);
+  white-space: pre-wrap;
 }
 
-.claude-chat__thinking {
+/* ── Inline code ── */
+.claude-chat__inline-code {
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ── Code blocks ── */
+.claude-chat__code-block {
+  position: relative;
+  margin: 0.5em 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.claude-chat__code-lang {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   color: var(--text-disabled);
-  font-style: italic;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom-left-radius: 4px;
+  transition: opacity 150ms ease;
+}
+
+.claude-chat__code-block pre {
+  margin: 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  overflow-x: auto;
+}
+
+.claude-chat__code-block code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+/* ── Copy button (bottom-right of code blocks) ── */
+.claude-chat__copy-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-disabled);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.claude-chat__code-block:hover .claude-chat__copy-btn {
+  opacity: 1;
+}
+
+.claude-chat__code-block--oneline:hover .claude-chat__code-lang {
+  opacity: 0;
+}
+
+.claude-chat__copy-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.claude-chat__copy-btn--copied {
+  color: var(--accent-green);
+  opacity: 1;
+}
+
+.claude-chat__copy-btn--copied:hover {
+  color: var(--accent-green);
+}
+
+/* ── Thinking block ── */
+.claude-chat__thinking-block {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 2px 0;
+}
+
+.claude-chat__thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px var(--spacing-2);
+  background: rgba(255, 255, 255, 0.02);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-disabled);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.claude-chat__thinking-toggle:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.claude-chat__thinking-icon {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.claude-chat__thinking-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.claude-chat__thinking-preview {
+  opacity: 0.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.claude-chat__thinking-content {
+  padding: var(--spacing-2) var(--spacing-3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-disabled);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Live thinking (during streaming) */
+.claude-chat__thinking-block--live {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.claude-chat__thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--spacing-2);
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+.claude-chat__thinking-content--live {
+  max-height: 200px;
+  animation: thinkingFadeIn 300ms ease;
+}
+
+@keyframes thinkingFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ── Tool use ── */
@@ -91,9 +335,6 @@
 }
 
 .claude-chat__tool-use {
-  display: flex;
-  align-items: baseline;
-  gap: var(--spacing-2);
   padding: var(--spacing-1) var(--spacing-2);
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -101,11 +342,23 @@
   font-size: 12px;
 }
 
+.claude-chat__tool-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-2);
+}
+
 .claude-chat__tool-name {
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--accent-yellow);
   flex-shrink: 0;
+}
+
+.claude-chat__tool-file {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 
 .claude-chat__tool-input {
@@ -117,7 +370,152 @@
   min-width: 0;
 }
 
-/* ── Tool results (collapsible) ── */
+.claude-chat__tool-result-toggle {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-disabled);
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.claude-chat__tool-result-toggle:hover {
+  color: var(--text-secondary);
+}
+
+/* ── Diff display ── */
+.claude-chat__diff {
+  margin-top: 6px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.claude-chat__diff-header {
+  padding: 4px var(--spacing-2);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.claude-chat__diff-content {
+  background: rgba(0, 0, 0, 0.2);
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.claude-chat__diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 var(--spacing-2);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.claude-chat__diff-sign {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  user-select: none;
+}
+
+.claude-chat__diff-line--removed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.claude-chat__diff-line--removed .claude-chat__diff-sign {
+  color: var(--accent-red);
+}
+
+.claude-chat__diff-line--added {
+  background: rgba(34, 197, 94, 0.1);
+  color: #86efac;
+}
+
+.claude-chat__diff-line--added .claude-chat__diff-sign {
+  color: var(--accent-green);
+}
+
+/* ── Tool progress indicator (live) ── */
+.claude-chat__tool-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px var(--spacing-2);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.claude-chat__tool-progress-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent-yellow);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.claude-chat__tool-progress-name {
+  font-weight: 600;
+  color: var(--accent-yellow);
+}
+
+.claude-chat__tool-progress-detail {
+  color: var(--text-disabled);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── Streaming cursor ── */
+.claude-chat__content--streaming {
+  position: relative;
+}
+
+.claude-chat__cursor {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  background: var(--accent-green);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 600ms steps(2) infinite;
+}
+
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ── Thinking placeholder ── */
+.claude-chat__thinking-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-disabled);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* ── Tool results (collapsible fallback) ── */
 .claude-chat__tool-results {
   display: flex;
   flex-direction: column;
@@ -157,4 +555,17 @@
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* ── Streaming section ── */
+.claude-chat__streaming-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+/* ── Write tool code preview ── */
+.claude-chat__tool-use--write .claude-chat__code-block,
+.claude-chat__tool-use--edit .claude-chat__diff {
+  margin-top: 6px;
 }

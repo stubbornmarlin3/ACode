@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useGitHubStore, type IssueDetail } from "../../store/githubStore";
+import { useGitHubStore, useActiveGitHubState, type IssueDetail } from "../../store/githubStore";
 
 export function IssueDetailView() {
   const owner = useGitHubStore((s) => s.owner);
   const repo = useGitHubStore((s) => s.repo);
-  const issueNumber = useGitHubStore((s) => s.selectedIssueNumber);
+  const issueNumber = useActiveGitHubState((s) => s.selectedIssueNumber);
   const navigateTo = useGitHubStore((s) => s.navigateTo);
 
   const [issue, setIssue] = useState<IssueDetail | null>(null);

@@ -1,12 +1,18 @@
 import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
-import { Minus, Square, X, Copy } from "lucide-react";
+import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { useLayoutStore } from "../../store/layoutStore";
 import "./WindowControls.css";
 
 export function WindowControls() {
   const [isWindows, setIsWindows] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const isSidebarOpen = useLayoutStore((s) => s.sidebar.isOpen);
+  const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
+  const settingsOpen = useLayoutStore((s) => s.settingsOpen);
+  const setSettingsOpen = useLayoutStore((s) => s.setSettingsOpen);
+  const hasProject = useLayoutStore((s) => s.projects.activeProjectId) !== null;
 
   useEffect(() => {
     setIsWindows(platform() === "windows");
@@ -30,6 +36,24 @@ export function WindowControls() {
 
   return (
     <div className="window-controls">
+      {hasProject && !settingsOpen && (
+        <button
+          className="window-controls__btn window-controls__btn--action"
+          onClick={toggleSidebar}
+          aria-label={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
+          title={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
+        >
+          {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+        </button>
+      )}
+      <button
+        className="window-controls__btn window-controls__btn--action"
+        onClick={() => setSettingsOpen(!settingsOpen)}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <Settings size={14} />
+      </button>
       <button
         className="window-controls__btn"
         onClick={() => win.minimize()}

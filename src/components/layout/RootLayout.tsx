@@ -1,17 +1,22 @@
 import "./RootLayout.css";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitFork, Search, Lock, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { FolderOpen, GitFork, Search, Lock, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useLayoutStore } from "../../store/layoutStore";
 import { useEditorStore } from "../../store/editorStore";
+import { useTerminalStore } from "../../store/terminalStore";
+import { useClaudeStore } from "../../store/claudeStore";
+import { useSettingsStore, matchesKeybind } from "../../store/settingsStore";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ProjectsRail } from "../projects/ProjectsRail";
 import { PillBar } from "../pillbar/PillBar";
 import { EditorTabBar } from "../editor/EditorTabBar";
 import { EditorPane } from "../editor/EditorPane";
+import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
 
 const isMacos = platform() === "macos";
@@ -150,7 +155,12 @@ function WelcomeScreen() {
   const [showClone, setShowClone] = useState(false);
 
   const handleOpen = async () => {
-    const selected = await open({ directory: true, multiple: false });
+    // Open the dialog at the parent of the last-opened project
+    const state = useEditorStore.getState();
+    const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
+    const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
+    const parentDir = ws && lastSep > 0 ? ws.substring(0, lastSep) : null;
+    const selected = await invoke<string | null>("pick_folder", { defaultPath: parentDir });
     if (!selected) return;
     const name = selected.split(/[\\/]/).pop() ?? selected;
     const id = selected;
@@ -192,11 +202,137 @@ function WelcomeScreen() {
 
 export function RootLayout() {
   const isSidebarOpen = useLayoutStore((s) => s.sidebar.isOpen);
-  const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const activeProjectId = useLayoutStore((s) => s.projects.activeProjectId);
   const projects = useLayoutStore((s) => s.projects.projects);
+  const settingsOpen = useLayoutStore((s) => s.settingsOpen);
+  const appearance = useSettingsStore((s) => s.appearance);
   const hasProject = activeProjectId !== null;
   const hasProjectsInRail = projects.length > 0;
+
+  // Load global settings from disk on startup
+  useEffect(() => {
+    useSettingsStore.getState().loadGlobal();
+  }, []);
+
+  // Apply appearance settings as CSS custom properties
+  useEffect(() => {
+    document.documentElement.style.setProperty("--sidebar-width", `${appearance.sidebarWidth}px`);
+    document.documentElement.style.setProperty("--pill-panel-height", `${appearance.pillPanelHeight}vh`);
+  }, [appearance.sidebarWidth, appearance.pillPanelHeight]);
+
+  // Listen for file system changes and refresh the sidebar tree
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ paths: string[] }>("fs-change", () => {
+      useEditorStore.getState().refreshTree();
+    }).then((u) => { unlisten = u; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  // Global keybindings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const keybinds = useSettingsStore.getState().keybinds;
+
+      for (const kb of keybinds) {
+        if (!matchesKeybind(e, kb.keys)) continue;
+
+        switch (kb.action) {
+          case "save": {
+            e.preventDefault();
+            const state = useEditorStore.getState();
+            const file = state.openFiles.find((f) => f.path === state.activeFilePath);
+            if (file) invoke("save_file", { path: file.path, content: file.content });
+            return;
+          }
+          case "toggleSidebar":
+            e.preventDefault();
+            useLayoutStore.getState().toggleSidebar();
+            return;
+          case "closeTab": {
+            e.preventDefault();
+            const st = useEditorStore.getState();
+            if (st.activeFilePath) st.closeFile(st.activeFilePath);
+            return;
+          }
+          case "nextTab": {
+            e.preventDefault();
+            const st = useEditorStore.getState();
+            const idx = st.openFiles.findIndex((f) => f.path === st.activeFilePath);
+            if (idx >= 0 && st.openFiles.length > 1) {
+              const next = st.openFiles[(idx + 1) % st.openFiles.length];
+              st.setActiveFile(next.path);
+            }
+            return;
+          }
+          case "prevTab": {
+            e.preventDefault();
+            const st = useEditorStore.getState();
+            const idx = st.openFiles.findIndex((f) => f.path === st.activeFilePath);
+            if (idx >= 0 && st.openFiles.length > 1) {
+              const prev = st.openFiles[(idx - 1 + st.openFiles.length) % st.openFiles.length];
+              st.setActiveFile(prev.path);
+            }
+            return;
+          }
+          case "toggleTerminal": {
+            e.preventDefault();
+            const layout = useLayoutStore.getState();
+            const ws = useEditorStore.getState().workspaceRoot;
+            const activeSession = layout.pillBar.sessions.find((s) => s.id === layout.pillBar.activePillId);
+            if (activeSession?.type === "terminal" && layout.pillBar.state === "panel-open") {
+              layout.setPillBarState("idle");
+            } else {
+              // Find first terminal session for current project
+              const termSession = layout.pillBar.sessions.find(
+                (s) => s.projectPath === ws && s.type === "terminal"
+              );
+              if (termSession) {
+                layout.setActivePillId(termSession.id);
+                useTerminalStore.getState().setActiveKey(termSession.id);
+              }
+              layout.setPillBarState("panel-open");
+            }
+            return;
+          }
+          case "toggleClaude": {
+            e.preventDefault();
+            const layout = useLayoutStore.getState();
+            const ws = useEditorStore.getState().workspaceRoot;
+            const activeSession = layout.pillBar.sessions.find((s) => s.id === layout.pillBar.activePillId);
+            if (activeSession?.type === "claude" && layout.pillBar.state === "panel-open") {
+              layout.setPillBarState("idle");
+            } else {
+              const claudeSession = layout.pillBar.sessions.find(
+                (s) => s.projectPath === ws && s.type === "claude"
+              );
+              if (claudeSession) {
+                layout.setActivePillId(claudeSession.id);
+                useClaudeStore.getState().setActiveKey(claudeSession.id);
+              }
+              layout.setPillBarState("panel-open");
+            }
+            return;
+          }
+          // find, undo, redo, cut, copy, paste — let CodeMirror / browser handle these
+          // commandPalette, newFile — no-op for now, can be wired later
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  if (settingsOpen) {
+    return (
+      <div className="root-layout root-layout--settings">
+        <WindowControls />
+        <SettingsScreen onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
+        <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
+      </div>
+    );
+  }
 
   if (!hasProject) {
     return (
@@ -216,10 +352,7 @@ export function RootLayout() {
       {isSidebarOpen && <Sidebar onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />}
       <div className="root-layout__center">
         <div className="root-layout__titlebar" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
-          <button className="root-layout__sidebar-toggle" onClick={toggleSidebar} onMouseDown={(e) => e.stopPropagation()}>
-            {isSidebarOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-          </button>
-          <span className="root-layout__title">acIDE</span>
+          <span className="root-layout__title">ACode</span>
         </div>
         <PillBar />
         <div className="editor-card">

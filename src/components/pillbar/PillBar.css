@@ -9,6 +9,86 @@
   gap: var(--spacing-2);
 }
 
+/* ── Drag slot wrappers ── */
+.pill-bar__drag-slot {
+  display: flex;
+  flex-shrink: 0;
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+/* Expanded pills take available space */
+.pill-bar__drag-slot:has(.pill-item--expanded) {
+  flex: 1;
+  min-width: 0;
+}
+
+.pill-bar__drag-slot--dragging {
+  z-index: 10;
+  opacity: 0.9;
+}
+
+/* ── Add session button ── */
+.pill-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  margin-top: -2px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.pill-add-btn:hover {
+  color: var(--text-secondary);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pill-add-dropdown {
+  position: fixed;
+  transform: translateX(-100%);
+  background: rgba(16, 20, 28, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 10000;
+  min-width: 180px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.pill-add-dropdown__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.pill-add-dropdown__item:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pill-add-dropdown__separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* Pill item — animates between expanded and collapsed */
 .pill-item {
   display: flex;
@@ -154,6 +234,34 @@
   padding: 10px 0;
 }
 
+/* Markdown output in pill (Claude) */
+.pill-item__output-md {
+  display: block;
+  min-width: 0;
+}
+
+.pill-item__output-md p {
+  margin: 0;
+}
+
+.pill-item__output-md code {
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.pill-item__output-md pre {
+  margin: 0;
+  display: inline;
+}
+
+.pill-item__output-md pre code {
+  background: none;
+  padding: 0;
+}
+
 /* New prompt button (plus icon) */
 .pill-item__new-prompt {
   display: flex;
@@ -185,6 +293,18 @@
   color: var(--accent-red);
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.5);
+}
+
+.pill-item__force-kill {
+  color: #ff2020;
+  border-color: rgba(255, 32, 32, 0.5);
+  background: rgba(255, 32, 32, 0.12);
+}
+
+.pill-item__force-kill:hover {
+  color: #ff2020;
+  background: rgba(255, 32, 32, 0.2);
+  border-color: rgba(255, 32, 32, 0.7);
 }
 
 /* ── Expanded panel ── */
@@ -220,4 +340,118 @@
   font-size: 12px;
   text-align: center;
   padding-top: var(--spacing-4);
+}
+
+/* ── Activity glow animations ── */
+
+@property --glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes glow-spin {
+  to { --glow-angle: 360deg; }
+}
+
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(59, 130, 246, 0.2); }
+  50%      { box-shadow: 0 0 12px 3px rgba(59, 130, 246, 0.45); }
+}
+
+@keyframes pulse-orange {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(249, 115, 22, 0.2); }
+  50%      { box-shadow: 0 0 12px 3px rgba(249, 115, 22, 0.45); }
+}
+
+/* Rotating border — collapsed (circle) uses CSS conic-gradient */
+.pill-item--collapsed.pill-item--spin-blue,
+.pill-item--collapsed.pill-item--spin-orange {
+  position: relative;
+  z-index: 0;
+  border-color: transparent;
+}
+
+.pill-item--collapsed.pill-item--spin-blue::before,
+.pill-item--collapsed.pill-item--spin-orange::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  z-index: -1;
+  animation: glow-spin 1.2s linear infinite;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1.5px;
+}
+
+.pill-item--collapsed.pill-item--spin-blue::before {
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #3b82f6 360deg
+  );
+}
+
+.pill-item--collapsed.pill-item--spin-orange::before {
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #f97316 360deg
+  );
+}
+
+/* Rotating border — expanded uses SVG overlay */
+.pill-item--expanded.pill-item--spin-blue,
+.pill-item--expanded.pill-item--spin-orange {
+  position: relative;
+  border-color: transparent;
+}
+
+.pill-item__border-spinner {
+  position: absolute;
+  inset: -1.5px;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.pill-item__border-spinner rect {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.pill-item__border-spinner--blue rect {
+  stroke: #3b82f6;
+}
+
+.pill-item__border-spinner--orange rect {
+  stroke: #f97316;
+}
+
+@keyframes dash-travel {
+  to { stroke-dashoffset: 0; }
+}
+
+/* Pulsating glow — unread */
+.pill-item--pulse-blue {
+  animation: pulse-blue 2.5s ease-in-out infinite;
+}
+
+.pill-item--pulse-orange {
+  animation: pulse-orange 2.5s ease-in-out infinite;
+}
+
+/* Finite pulse — 2 cycles then stop (for expanded/active pill) */
+.pill-item--pulse-finite.pill-item--pulse-blue {
+  animation: pulse-blue 2.5s ease-in-out 2;
+}
+
+.pill-item--pulse-finite.pill-item--pulse-orange {
+  animation: pulse-orange 2.5s ease-in-out 2;
 }

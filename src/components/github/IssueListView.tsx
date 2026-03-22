@@ -1,28 +1,28 @@
 import { useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Copy } from "lucide-react";
-import { useGitHubStore, type IssueSummary } from "../../store/githubStore";
+import { useGitHubStore, useActiveGitHubState, updateActiveGitHubSession, type IssueSummary } from "../../store/githubStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 
 export function IssueListView() {
   const owner = useGitHubStore((s) => s.owner);
   const repo = useGitHubStore((s) => s.repo);
-  const issues = useGitHubStore((s) => s.issues);
-  const isLoading = useGitHubStore((s) => s.isLoading);
+  const issues = useActiveGitHubState((s) => s.issues);
+  const isLoading = useActiveGitHubState((s) => s.isLoading);
   const navigateTo = useGitHubStore((s) => s.navigateTo);
   const contextMenu = useContextMenu();
 
   useEffect(() => {
     if (!owner || !repo) return;
-    useGitHubStore.setState({ isLoading: true });
+    updateActiveGitHubSession({ isLoading: true });
     invoke<IssueSummary[]>("github_list_issues", { owner, repo, stateFilter: "open" })
-      .then((items) => useGitHubStore.setState({ issues: items }))
+      .then((items) => updateActiveGitHubSession({ issues: items }))
       .catch(() => {})
-      .finally(() => useGitHubStore.setState({ isLoading: false }));
+      .finally(() => updateActiveGitHubSession({ isLoading: false }));
   }, [owner, repo]);
 
   const handleSelect = (issue: IssueSummary) => {
-    useGitHubStore.setState({ selectedIssueNumber: issue.number });
+    updateActiveGitHubSession({ selectedIssueNumber: issue.number });
     navigateTo("issue-detail");
   };
 

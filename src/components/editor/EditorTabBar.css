@@ -37,6 +37,15 @@
   transition: color 100ms ease;
 }
 
+.editor-tab-bar__tab:not(.editor-tab-bar__tab--dragging) {
+  transition: color 100ms ease, transform 150ms ease;
+}
+
+.editor-tab-bar__tab--dragging {
+  opacity: 0.9;
+  z-index: 10;
+}
+
 .editor-tab-bar__tab:hover {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.04);

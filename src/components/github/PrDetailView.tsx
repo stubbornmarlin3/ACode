@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useGitHubStore, type PrDetail, type PrFile, type PrComment } from "../../store/githubStore";
+import { useGitHubStore, useActiveGitHubState, type PrDetail, type PrFile, type PrComment } from "../../store/githubStore";
 
 export function PrDetailView() {
   const owner = useGitHubStore((s) => s.owner);
   const repo = useGitHubStore((s) => s.repo);
-  const prNumber = useGitHubStore((s) => s.selectedPrNumber);
+  const prNumber = useActiveGitHubState((s) => s.selectedPrNumber);
   const navigateTo = useGitHubStore((s) => s.navigateTo);
 
   const [pr, setPr] = useState<PrDetail | null>(null);

@@ -30,6 +30,15 @@
   transition: color 120ms ease, background 120ms ease;
 }
 
+.sidebar-icon-rail__btn:not(.sidebar-icon-rail__btn--dragging) {
+  transition: color 120ms ease, background 120ms ease, transform 150ms ease;
+}
+
+.sidebar-icon-rail__btn--dragging {
+  opacity: 0.9;
+  z-index: 10;
+}
+
 .sidebar-icon-rail__btn:hover {
   color: var(--text-secondary);
 }
@@ -37,4 +46,25 @@
 .sidebar-icon-rail__btn[aria-selected="true"] {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-icon-rail__btn {
+  position: relative;
+}
+
+.sidebar-icon-rail__badge {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  color: #fff;
+  background: var(--accent-blue);
+  border-radius: 7px;
+  pointer-events: none;
 }

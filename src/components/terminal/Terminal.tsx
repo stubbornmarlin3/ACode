@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { listen } from "@tauri-apps/api/event";
 import { Copy, ClipboardPaste, Trash2 } from "lucide-react";
 import { useTerminalStore } from "../../store/terminalStore";
+import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
@@ -13,29 +13,34 @@ export function Terminal() {
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const contextMenu = useContextMenu();
+  const terminalSettings = useSettingsStore((s) => s.terminal);
+
+  // Track how much of the buffer we've already written to xterm
+  const writtenLengthRef = useRef(0);
 
   const fitTerminal = useCallback(() => {
     const fitAddon = fitAddonRef.current;
     if (!fitAddon) return;
     try {
       fitAddon.fit();
-    } catch {
-      // fit can throw if container is hidden
-    }
+    } catch {}
   }, []);
 
+  // Create xterm instance and manage all buffer writes (deltas + project switches)
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const tSettings = useSettingsStore.getState().terminal;
     const xterm = new XTerm({
       fontFamily: "JetBrainsMono Nerd Font Mono, JetBrainsMono Nerd Font, JetBrains Mono, monospace",
-      fontSize: 13,
+      fontSize: tSettings.fontSize,
       lineHeight: 1.4,
       cursorBlink: false,
       cursorStyle: "bar",
       cursorWidth: 1,
       cursorInactiveStyle: "none",
       disableStdin: true,
+      scrollback: tSettings.scrollback,
       theme: {
         background: "rgba(0, 0, 0, 0)",
         foreground: "#e8edf2",
@@ -59,45 +64,65 @@ export function Terminal() {
         brightWhite: "#f8fafc",
       },
       allowTransparency: true,
-      scrollback: 5000,
     });
 
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     xterm.open(containerRef.current);
-    xterm.write("\x1b[?25l"); // hide cursor
+    xterm.write("\x1b[?25l");
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
-    const unlisteners: (() => void)[] = [];
-    let displayedCmdId: number | null = null;
-
-    // Listen for pill command output
-    listen<{ id: number; data: string; stream: string }>("cmd-output", (event) => {
-      const state = useTerminalStore.getState();
-      if (event.payload.id === state.pillCmdId) {
-        // Print command header on first output chunk
-        if (displayedCmdId !== event.payload.id) {
-          displayedCmdId = event.payload.id;
-          xterm.write(`\x1b[90m❯ ${state.lastCommand}\x1b[0m\r\n`);
-        }
-        xterm.write(event.payload.data.replace(/\n/g, "\r\n"));
+    xterm.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.key === "c" && xterm.hasSelection()) {
+        navigator.clipboard.writeText(xterm.getSelection());
+        xterm.clearSelection();
+        return false;
       }
-    }).then((u) => unlisteners.push(u));
+      return true;
+    });
 
-    // Listen for pill command completion
-    listen<{ id: number; code: number | null }>("cmd-done", (event) => {
-      const currentCmdId = useTerminalStore.getState().pillCmdId;
-      if (event.payload.id === currentCmdId) {
-        const code = event.payload.code;
-        if (code !== null && code !== 0) {
-          xterm.write(`\r\n\x1b[90m[exit ${code}]\x1b[0m\r\n`);
-        } else {
-          xterm.write("\r\n");
-        }
+    // Restore buffer for the current project (handles initial mount + settings change recreation)
+    const initialKey = useTerminalStore.getState().activeKey;
+    if (initialKey) {
+      const buf = useTerminalStore.getState().projects[initialKey]?.outputBuffer ?? "";
+      if (buf) xterm.write(buf);
+      writtenLengthRef.current = buf.length;
+    } else {
+      writtenLengthRef.current = 0;
+    }
+
+    // Subscribe to store changes — handles both deltas and project switches
+    const unsub = useTerminalStore.subscribe((state, prev) => {
+      const key = state.activeKey;
+
+      // Active project cleared
+      if (!key) {
+        xterm.reset();
+        xterm.write("\x1b[?25l");
+        writtenLengthRef.current = 0;
+        return;
       }
-    }).then((u) => unlisteners.push(u));
+
+      const buf = state.projects[key]?.outputBuffer ?? "";
+
+      // Project switched — full rewrite
+      if (key !== prev.activeKey) {
+        xterm.reset();
+        xterm.write("\x1b[?25l");
+        if (buf) xterm.write(buf);
+        writtenLengthRef.current = buf.length;
+        return;
+      }
+
+      // Same project — write only the delta (new content appended since last write)
+      if (buf.length > writtenLengthRef.current) {
+        const delta = buf.slice(writtenLengthRef.current);
+        xterm.write(delta);
+        writtenLengthRef.current = buf.length;
+      }
+    });
 
     requestAnimationFrame(() => fitTerminal());
 
@@ -106,12 +131,12 @@ export function Terminal() {
 
     return () => {
       observer.disconnect();
-      unlisteners.forEach((u) => u());
+      unsub();
       xterm.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [fitTerminal]);
+  }, [fitTerminal, terminalSettings]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -133,16 +158,18 @@ export function Terminal() {
           label: "Paste",
           icon: <ClipboardPaste size={12} />,
           shortcut: "Ctrl+V",
-          action: () => {
-            // Terminal input is disabled (pill-driven), paste is a no-op
-          },
+          action: () => {},
         },
         "separator",
         {
           label: "Clear Terminal",
           icon: <Trash2 size={12} />,
           action: () => {
-            xterm?.clear();
+            xterm?.reset();
+            xterm?.write("\x1b[?25l");
+            writtenLengthRef.current = 0;
+            const key = useTerminalStore.getState().activeKey;
+            if (key) useTerminalStore.getState().clearOutputBuffer(key);
           },
         },
       ];

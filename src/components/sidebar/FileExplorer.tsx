@@ -76,23 +76,25 @@ function FileTreeItem({
   onNewFile: (parentPath: string) => void;
   onNewFolder: (parentPath: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const openFile = useEditorStore((s) => s.openFile);
   const expandDir = useEditorStore((s) => s.expandDir);
+  const toggleDir = useEditorStore((s) => s.toggleDir);
   const refreshTree = useEditorStore((s) => s.refreshTree);
   const activeFilePath = useEditorStore((s) => s.activeFilePath);
+  const expanded = useEditorStore((s) => s.expandedDirs.has(entry.path));
 
   const handleClick = useCallback(async () => {
     if (entry.is_dir) {
       if (!expanded && entry.children && entry.children.length === 0) {
         await expandDir(entry.path);
+      } else {
+        toggleDir(entry.path);
       }
-      setExpanded((prev) => !prev);
     } else {
       openFile(entry.path, entry.name);
     }
-  }, [entry, expanded, openFile, expandDir]);
+  }, [entry, expanded, openFile, expandDir, toggleDir]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo, useCallback } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
+import { indentUnit } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,13 +14,9 @@ import {
   Redo2,
 } from "lucide-react";
 import { useEditorStore } from "../../store/editorStore";
+import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorPane.css";
-
-const transparentTheme = EditorView.theme({
-  "&": { background: "transparent" },
-  ".cm-gutters": { background: "transparent" },
-});
 
 function getLanguageExtension(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase();
@@ -43,6 +40,7 @@ export function EditorPane() {
   const activeFilePath = useEditorStore((s) => s.activeFilePath);
   const openFiles = useEditorStore((s) => s.openFiles);
   const updateFileContent = useEditorStore((s) => s.updateFileContent);
+  const editorSettings = useSettingsStore((s) => s.editor);
   const contextMenu = useContextMenu();
 
   const activeFile = useMemo(
@@ -62,21 +60,37 @@ export function EditorPane() {
 
     const lang = getLanguageExtension(activeFile.name);
     const filePath = activeFile.path;
+    const settings = useSettingsStore.getState().editor;
+
+    const fontTheme = EditorView.theme({
+      "&": { background: "transparent" },
+      ".cm-gutters": { background: "transparent" },
+      ".cm-scroller": {
+        fontFamily: `"${settings.fontFamily}", "Fira Code", "Cascadia Code", monospace`,
+        fontSize: `${settings.fontSize}px`,
+      },
+    });
+
+    const extensions = [
+      basicSetup,
+      lang,
+      oneDark,
+      fontTheme,
+      indentUnit.of(" ".repeat(settings.tabSize)),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          updateFileContent(filePath, update.state.doc.toString());
+        }
+      }),
+    ];
+
+    if (settings.lineWrapping) {
+      extensions.push(EditorView.lineWrapping);
+    }
 
     const state = EditorState.create({
       doc: activeFile.content,
-      extensions: [
-        basicSetup,
-        lang,
-        oneDark,
-        transparentTheme,
-        EditorView.lineWrapping,
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            updateFileContent(filePath, update.state.doc.toString());
-          }
-        }),
-      ],
+      extensions,
     });
 
     viewRef.current = new EditorView({
@@ -88,7 +102,7 @@ export function EditorPane() {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [activeFilePath]); // intentionally only re-create on file switch
+  }, [activeFilePath, editorSettings]); // re-create when settings change
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {

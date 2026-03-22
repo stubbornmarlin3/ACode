@@ -1,4 +1,4 @@
-import { useGitHubStore } from "../../store/githubStore";
+import { useGitHubStore, useActiveGitHubState } from "../../store/githubStore";
 import { GitHubAuthGate } from "./GitHubAuthGate";
 import { PrListView } from "./PrListView";
 import { PrDetailView } from "./PrDetailView";
@@ -8,7 +8,7 @@ import "./GitHubPanel.css";
 
 export function GitHubPanel() {
   const isAuthenticated = useGitHubStore((s) => s.isAuthenticated);
-  const activeView = useGitHubStore((s) => s.activeView);
+  const activeView = useActiveGitHubState((s) => s.activeView);
 
   if (!isAuthenticated) {
     return <GitHubAuthGate />;

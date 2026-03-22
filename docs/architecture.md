@@ -1,4 +1,4 @@
-# acIDE Architecture
+# ACode Architecture
 
 ## See Also
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-acIDE is a custom cross-platform code editor built on **Tauri 2**. The app is split into two layers that communicate via Tauri's IPC bridge:
+ACode is a custom cross-platform code editor built on **Tauri 2**. The app is split into two layers that communicate via Tauri's IPC bridge:
 
 - **Backend** (`src-tauri/`) — Rust. Handles all system operations: file I/O, spawning language server processes, AI integration, OS-level APIs.
 - **Frontend** (`src/`) — TypeScript + React + Vite. Handles all UI: editor, panels, tabs, settings.
@@ -30,7 +30,7 @@ acIDE is a custom cross-platform code editor built on **Tauri 2**. The app is sp
 ## Directory Structure
 
 ```
-acIDE/
+ACode/
 ├── docs/                        # Project documentation
 │   ├── architecture.md          # This file
 │   ├── contributing.md          # Dev setup and contribution guide

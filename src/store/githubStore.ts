@@ -60,48 +60,24 @@ export interface IssueDetail {
   created_at: string;
 }
 
-interface GitHubStore {
-  // Auth
-  isAuthenticated: boolean;
-  authUser: string | null;
-
-  // Repo context (from git remote)
-  owner: string | null;
-  repo: string | null;
-
-  // Navigation
+/** Per-session GitHub state */
+export interface GitHubSessionState {
   activeView: GitHubView;
   selectedPrNumber: number | null;
   selectedIssueNumber: number | null;
   selectedPrFile: string | null;
-
-  // Data
   pullRequests: PrSummary[];
   currentPr: PrDetail | null;
   prFiles: PrFile[];
   prComments: PrComment[];
   issues: IssueSummary[];
   currentIssue: IssueDetail | null;
-
-  // UI state
   isLoading: boolean;
   lastOutputLine: string;
   showingOutput: boolean;
-
-  // Actions
-  setRepoContext: (owner: string, repo: string) => void;
-  setAuthenticated: (isAuth: boolean, user?: string) => void;
-  navigateTo: (view: GitHubView) => void;
-  setLastOutputLine: (line: string) => void;
-  setShowingOutput: (showing: boolean) => void;
-  reset: () => void;
 }
 
-export const useGitHubStore = create<GitHubStore>((set) => ({
-  isAuthenticated: false,
-  authUser: null,
-  owner: null,
-  repo: null,
+const EMPTY_SESSION: GitHubSessionState = {
   activeView: "pr-list",
   selectedPrNumber: null,
   selectedIssueNumber: null,
@@ -115,17 +91,81 @@ export const useGitHubStore = create<GitHubStore>((set) => ({
   isLoading: false,
   lastOutputLine: "",
   showingOutput: false,
+};
+
+function getSession(
+  sessions: Record<string, GitHubSessionState>,
+  key: string | null,
+): GitHubSessionState {
+  if (!key) return EMPTY_SESSION;
+  return sessions[key] ?? EMPTY_SESSION;
+}
+
+function setSession(
+  sessions: Record<string, GitHubSessionState>,
+  key: string,
+  partial: Partial<GitHubSessionState>,
+): Record<string, GitHubSessionState> {
+  const prev = sessions[key] ?? { ...EMPTY_SESSION };
+  return { ...sessions, [key]: { ...prev, ...partial } };
+}
+
+interface GitHubStore {
+  // Global auth + repo context (shared across sessions)
+  isAuthenticated: boolean;
+  authUser: string | null;
+  owner: string | null;
+  repo: string | null;
+
+  // Per-session state
+  activeKey: string | null;
+  sessions: Record<string, GitHubSessionState>;
+
+  // Actions — global
+  setRepoContext: (owner: string, repo: string) => void;
+  setAuthenticated: (isAuth: boolean, user?: string) => void;
+  setActiveKey: (key: string | null) => void;
+
+  // Actions — per active session
+  navigateTo: (view: GitHubView) => void;
+  setLastOutputLine: (line: string) => void;
+  setShowingOutput: (showing: boolean) => void;
+
+  reset: () => void;
+}
+
+export const useGitHubStore = create<GitHubStore>((set, get) => ({
+  isAuthenticated: false,
+  authUser: null,
+  owner: null,
+  repo: null,
+  activeKey: null,
+  sessions: {},
 
   setRepoContext: (owner, repo) => set({ owner, repo }),
 
   setAuthenticated: (isAuth, user) =>
     set({ isAuthenticated: isAuth, authUser: user ?? null }),
 
-  navigateTo: (view) => set({ activeView: view }),
+  setActiveKey: (key) => set({ activeKey: key }),
 
-  setLastOutputLine: (line) => set({ lastOutputLine: line }),
+  navigateTo: (view) => {
+    const { activeKey, sessions } = get();
+    if (!activeKey) return;
+    set({ sessions: setSession(sessions, activeKey, { activeView: view }) });
+  },
 
-  setShowingOutput: (showing) => set({ showingOutput: showing }),
+  setLastOutputLine: (line) => {
+    const { activeKey, sessions } = get();
+    if (!activeKey) return;
+    set({ sessions: setSession(sessions, activeKey, { lastOutputLine: line }) });
+  },
+
+  setShowingOutput: (showing) => {
+    const { activeKey, sessions } = get();
+    if (!activeKey) return;
+    set({ sessions: setSession(sessions, activeKey, { showingOutput: showing }) });
+  },
 
   reset: () =>
     set({
@@ -133,18 +173,22 @@ export const useGitHubStore = create<GitHubStore>((set) => ({
       authUser: null,
       owner: null,
       repo: null,
-      activeView: "pr-list",
-      selectedPrNumber: null,
-      selectedIssueNumber: null,
-      selectedPrFile: null,
-      pullRequests: [],
-      currentPr: null,
-      prFiles: [],
-      prComments: [],
-      issues: [],
-      currentIssue: null,
-      isLoading: false,
-      lastOutputLine: "",
-      showingOutput: false,
+      activeKey: null,
+      sessions: {},
     }),
 }));
+
+/** Selector hook to read the active session's GitHub state */
+export function useActiveGitHubState<T>(selector: (s: GitHubSessionState) => T): T {
+  return useGitHubStore((s) => {
+    const session = getSession(s.sessions, s.activeKey);
+    return selector(session);
+  });
+}
+
+/** Update the active session's state (for use in components via setState-style calls) */
+export function updateActiveGitHubSession(partial: Partial<GitHubSessionState>): void {
+  const { activeKey, sessions } = useGitHubStore.getState();
+  if (!activeKey) return;
+  useGitHubStore.setState({ sessions: setSession(sessions, activeKey, partial) });
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Github } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useGitHubStore } from "../../store/githubStore";
@@ -15,6 +15,7 @@ export function GitHubAuthGate() {
   const [error, setError] = useState("");
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [token, setToken] = useState("");
+  const [autoChecked, setAutoChecked] = useState(false);
 
   const handleCheckGhAuth = async () => {
     setChecking(true);
@@ -65,6 +66,14 @@ export function GitHubAuthGate() {
       setChecking(false);
     }
   };
+
+  // Auto-check gh CLI auth on first render
+  useEffect(() => {
+    if (!autoChecked) {
+      setAutoChecked(true);
+      handleCheckGhAuth();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="github-auth-gate">

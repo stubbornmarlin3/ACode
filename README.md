@@ -1,4 +1,4 @@
-# acIDE
+# ACode
 
 Aidan's custom cross-platform code editor, built on Tauri 2 + React + CodeMirror 6.
 

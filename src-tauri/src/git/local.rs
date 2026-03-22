@@ -16,32 +16,36 @@ pub fn git_init(path: String) -> Result<(), String> {
 
 /// Clone a git repository to a destination directory.
 #[tauri::command]
-pub fn git_clone(url: String, dest: String) -> Result<String, String> {
-    let dest_path = Path::new(&dest);
+pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let dest_path = Path::new(&dest);
 
-    let final_path = if dest_path.exists() && dest_path.is_dir() {
-        let repo_name = url
-            .trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit('/')
-            .next()
-            .unwrap_or("repo");
-        dest_path.join(repo_name)
-    } else {
-        dest_path.to_path_buf()
-    };
+        let final_path = if dest_path.exists() && dest_path.is_dir() {
+            let repo_name = url
+                .trim_end_matches('/')
+                .trim_end_matches(".git")
+                .rsplit('/')
+                .next()
+                .unwrap_or("repo");
+            dest_path.join(repo_name)
+        } else {
+            dest_path.to_path_buf()
+        };
 
-    let output = Command::new("git")
-        .args(["clone", &url, &final_path.to_string_lossy()])
-        .output()
-        .map_err(|e| format!("Failed to run git clone: {}", e))?;
+        let output = Command::new("git")
+            .args(["clone", &url, &final_path.to_string_lossy()])
+            .output()
+            .map_err(|e| format!("Failed to run git clone: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git clone failed: {}", stderr));
-    }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git clone failed: {}", stderr));
+        }
 
-    Ok(final_path.to_string_lossy().to_string())
+        Ok(final_path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Get the status of a git repository.
@@ -537,65 +541,77 @@ pub fn git_discard(repo_path: String, file_paths: Vec<String>) -> Result<(), Str
 
 /// Fetch from remote (shells out to git CLI for credential handling).
 #[tauri::command]
-pub fn git_fetch(repo_path: String) -> Result<(), String> {
-    let output = Command::new("git")
-        .args(["fetch", "--prune"])
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("Failed to run git fetch: {}", e))?;
+pub async fn git_fetch(repo_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["fetch", "--prune"])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to run git fetch: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git fetch failed: {}", stderr));
-    }
-    Ok(())
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git fetch failed: {}", stderr));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Push to remote (shells out to git CLI for credential handling).
 /// If set_upstream is true, pushes with --set-upstream origin <branch>.
 #[tauri::command]
-pub fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(), String> {
-    let mut args = vec!["push".to_string()];
+pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec!["push".to_string()];
 
-    if set_upstream.unwrap_or(false) {
-        let repo = Repository::discover(&repo_path)
-            .map_err(|e| format!("Failed to open repo: {}", e))?;
-        let branch = match repo.head() {
-            Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
-            Err(_) => "HEAD".to_string(),
-        };
-        args.push("--set-upstream".to_string());
-        args.push("origin".to_string());
-        args.push(branch);
-    }
+        if set_upstream.unwrap_or(false) {
+            let repo = Repository::discover(&repo_path)
+                .map_err(|e| format!("Failed to open repo: {}", e))?;
+            let branch = match repo.head() {
+                Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
+                Err(_) => "HEAD".to_string(),
+            };
+            args.push("--set-upstream".to_string());
+            args.push("origin".to_string());
+            args.push(branch);
+        }
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("Failed to run git push: {}", e))?;
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to run git push: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git push failed: {}", stderr));
-    }
-    Ok(())
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git push failed: {}", stderr));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Pull from remote (shells out to git CLI for credential handling).
 #[tauri::command]
-pub fn git_pull(repo_path: String) -> Result<(), String> {
-    let output = Command::new("git")
-        .args(["pull"])
-        .current_dir(&repo_path)
-        .output()
-        .map_err(|e| format!("Failed to run git pull: {}", e))?;
+pub async fn git_pull(repo_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["pull"])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("Failed to run git pull: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git pull failed: {}", stderr));
-    }
-    Ok(())
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git pull failed: {}", stderr));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Get remote info (URL, owner, repo name).

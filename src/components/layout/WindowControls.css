@@ -30,3 +30,13 @@
   background: #e81123;
   color: #fff;
 }
+
+.window-controls__btn--action {
+  width: 36px;
+  color: var(--text-disabled);
+}
+
+.window-controls__btn--action:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { GitFork, ChevronDown, MoreHorizontal, RefreshCw } from "lucide-react";
+import { GitFork, ChevronDown, MoreHorizontal, RefreshCw, GitBranchPlus } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
 
@@ -13,9 +13,12 @@ export function GitBranchSelector() {
 
   const [branchOpen, setBranchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [creatingBranch, setCreatingBranch] = useState(false);
   const [newBranch, setNewBranch] = useState("");
   const branchRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const hasMultipleBranches = branches && branches.local.length > 1;
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -26,6 +29,8 @@ export function GitBranchSelector() {
       }
       if (menuOpen && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
+        setCreatingBranch(false);
+        setNewBranch("");
       }
     };
     document.addEventListener("mousedown", handler);
@@ -44,9 +49,10 @@ export function GitBranchSelector() {
     if (!workspaceRoot || !newBranch.trim()) return;
     const name = newBranch.trim();
     setNewBranch("");
+    setCreatingBranch(false);
+    setMenuOpen(false);
     await createBranch(workspaceRoot, name);
     await checkoutBranch(workspaceRoot, name);
-    setBranchOpen(false);
   };
 
   const handleCreateKeyDown = (e: React.KeyboardEvent) => {
@@ -55,7 +61,8 @@ export function GitBranchSelector() {
       handleCreate();
     }
     if (e.key === "Escape") {
-      setBranchOpen(false);
+      setCreatingBranch(false);
+      setNewBranch("");
     }
   };
 
@@ -70,13 +77,17 @@ export function GitBranchSelector() {
     <div className="git-branch-selector">
       {/* Branch button */}
       <div className="git-branch-selector__left" ref={branchRef}>
-        <button className="git-branch-selector__current" onClick={() => setBranchOpen(!branchOpen)}>
+        <button
+          className="git-branch-selector__current"
+          onClick={hasMultipleBranches ? () => setBranchOpen(!branchOpen) : undefined}
+          style={!hasMultipleBranches ? { cursor: "default" } : undefined}
+        >
           <GitFork size={14} />
           <span className="git-branch-selector__name">{branches.current}</span>
-          <ChevronDown size={12} />
+          {hasMultipleBranches && <ChevronDown size={12} />}
         </button>
 
-        {branchOpen && (
+        {branchOpen && hasMultipleBranches && (
           <div className="git-branch-selector__dropdown">
             {branches.local.map((b) => (
               <button
@@ -87,23 +98,6 @@ export function GitBranchSelector() {
                 {b}
               </button>
             ))}
-            <div className="git-branch-selector__create">
-              <input
-                className="git-branch-selector__create-input"
-                placeholder="New branch..."
-                value={newBranch}
-                onChange={(e) => setNewBranch(e.target.value)}
-                onKeyDown={handleCreateKeyDown}
-                autoFocus
-              />
-              <button
-                className="git-branch-selector__create-btn"
-                onClick={handleCreate}
-                disabled={!newBranch.trim()}
-              >
-                +
-              </button>
-            </div>
           </div>
         )}
       </div>
@@ -112,7 +106,7 @@ export function GitBranchSelector() {
       <div className="git-branch-selector__menu-wrap" ref={menuRef}>
         <button
           className="git-branch-selector__menu-btn"
-          onClick={() => setMenuOpen(!menuOpen)}
+          onClick={() => { setMenuOpen(!menuOpen); setCreatingBranch(false); setNewBranch(""); }}
           title="More actions"
           aria-label="More actions"
         >
@@ -121,6 +115,30 @@ export function GitBranchSelector() {
 
         {menuOpen && (
           <div className="git-branch-selector__menu">
+            {!creatingBranch ? (
+              <button className="git-branch-selector__menu-item" onClick={() => setCreatingBranch(true)}>
+                <GitBranchPlus size={12} />
+                New branch
+              </button>
+            ) : (
+              <div className="git-branch-selector__create">
+                <input
+                  className="git-branch-selector__create-input"
+                  placeholder="Branch name..."
+                  value={newBranch}
+                  onChange={(e) => setNewBranch(e.target.value)}
+                  onKeyDown={handleCreateKeyDown}
+                  autoFocus
+                />
+                <button
+                  className="git-branch-selector__create-btn"
+                  onClick={handleCreate}
+                  disabled={!newBranch.trim()}
+                >
+                  +
+                </button>
+              </div>
+            )}
             <button className="git-branch-selector__menu-item" onClick={handleFetchAll}>
               <RefreshCw size={12} />
               Fetch

@@ -23,6 +23,11 @@
   grid-template-areas: "welcome projects";
 }
 
+.root-layout--settings {
+  grid-template-columns: 1fr var(--projects-rail-width);
+  grid-template-areas: "settings projects";
+}
+
 /* Welcome screen — centered open-project prompt */
 .welcome-screen {
   grid-area: welcome;

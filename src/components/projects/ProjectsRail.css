@@ -6,6 +6,7 @@
   height: 100%;
   padding-top: 0;
   padding-bottom: var(--spacing-2);
+  padding-left: 6px;
   padding-right: 6px;
   gap: var(--spacing-2);
   overflow-y: auto;
@@ -18,6 +19,10 @@
   width: 100%;
   height: 30px;
   flex-shrink: 0;
+}
+
+.pill-add-btn + .projects-rail__icon {
+  margin-top: 4px;
 }
 
 .projects-rail__icon {
@@ -44,49 +49,163 @@
 }
 
 .projects-rail__icon--active {
-  border-color: var(--accent-blue);
-  color: var(--accent-blue);
-  box-shadow: 0 0 0 1px var(--accent-blue);
-}
-
-.projects-rail__add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
-  background: transparent;
-  color: var(--text-disabled);
-  font-size: 18px;
-  flex-shrink: 0;
-  transition: border-color 150ms ease, color 150ms ease;
-}
-
-.projects-rail__add:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  color: var(--text-secondary);
-}
-
-.projects-rail__settings {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  margin-bottom: var(--spacing-2);
-  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 100ms ease;
-}
-
-.projects-rail__settings:hover {
-  border-color: rgba(255, 255, 255, 0.14);
+  border: 2px solid rgba(255, 255, 255, 0.45);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.1);
   transform: scale(1.08);
+}
+
+.projects-rail__icon--dragging {
+  opacity: 0.9;
+  z-index: 10;
+}
+
+.projects-rail__icon:not(.projects-rail__icon--dragging) {
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+
+.projects-rail__icon-img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+
+/* ── Activity glow animations for project icons ── */
+
+@property --rail-glow-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes rail-glow-spin {
+  to { --rail-glow-angle: 360deg; }
+}
+
+@keyframes rail-pulse-blue {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(59, 130, 246, 0.2); }
+  50%      { box-shadow: 0 0 10px 3px rgba(59, 130, 246, 0.45); }
+}
+
+@keyframes rail-pulse-orange {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(249, 115, 22, 0.2); }
+  50%      { box-shadow: 0 0 10px 3px rgba(249, 115, 22, 0.45); }
+}
+
+@keyframes rail-pulse-both {
+  0%, 45%  { box-shadow: 0 0 8px 2px rgba(59, 130, 246, 0.4); }
+  50%, 95% { box-shadow: 0 0 8px 2px rgba(249, 115, 22, 0.4); }
+  100%     { box-shadow: 0 0 8px 2px rgba(59, 130, 246, 0.4); }
+}
+
+/* Rotating border — shared base */
+.projects-rail__icon--spin-blue,
+.projects-rail__icon--spin-orange,
+.projects-rail__icon--spin-both,
+.projects-rail__icon--spin-blue--pulse-orange,
+.projects-rail__icon--spin-orange--pulse-blue {
+  position: relative;
+  z-index: 0;
+  border-color: transparent;
+}
+
+.projects-rail__icon--spin-blue::before,
+.projects-rail__icon--spin-orange::before,
+.projects-rail__icon--spin-both::before,
+.projects-rail__icon--spin-both::after,
+.projects-rail__icon--spin-blue--pulse-orange::before,
+.projects-rail__icon--spin-orange--pulse-blue::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  z-index: -1;
+  animation: rail-glow-spin 1.2s linear infinite;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 2px;
+}
+
+/* Single color borders */
+.projects-rail__icon--spin-blue::before {
+  background: conic-gradient(
+    from var(--rail-glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #3b82f6 360deg
+  );
+}
+
+.projects-rail__icon--spin-orange::before {
+  background: conic-gradient(
+    from var(--rail-glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #f97316 360deg
+  );
+}
+
+/* Both spinning — two borders offset 180deg */
+.projects-rail__icon--spin-both::before {
+  background: conic-gradient(
+    from var(--rail-glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #3b82f6 360deg
+  );
+}
+
+.projects-rail__icon--spin-both::after {
+  background: conic-gradient(
+    from calc(var(--rail-glow-angle) + 180deg),
+    transparent 0deg,
+    transparent 270deg,
+    #f97316 360deg
+  );
+}
+
+/* Spin blue + pulse orange */
+.projects-rail__icon--spin-blue--pulse-orange::before {
+  background: conic-gradient(
+    from var(--rail-glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #3b82f6 360deg
+  );
+}
+
+.projects-rail__icon--spin-blue--pulse-orange {
+  animation: rail-pulse-orange 2.5s ease-in-out infinite;
+}
+
+/* Spin orange + pulse blue */
+.projects-rail__icon--spin-orange--pulse-blue::before {
+  background: conic-gradient(
+    from var(--rail-glow-angle),
+    transparent 0deg,
+    transparent 270deg,
+    #f97316 360deg
+  );
+}
+
+.projects-rail__icon--spin-orange--pulse-blue {
+  animation: rail-pulse-blue 2.5s ease-in-out infinite;
+}
+
+/* Pulsating only (subtle) */
+.projects-rail__icon--pulse-blue {
+  animation: rail-pulse-blue 2.5s ease-in-out infinite;
+}
+
+.projects-rail__icon--pulse-orange {
+  animation: rail-pulse-orange 2.5s ease-in-out infinite;
+}
+
+.projects-rail__icon--pulse-both {
+  animation: rail-pulse-both 3s ease-in-out infinite;
 }
