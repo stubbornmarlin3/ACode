@@ -1,9 +1,78 @@
+use std::cell::Cell;
 use std::path::Path;
-use std::process::Command;
 
-use git2::{DiffOptions, Repository, StatusOptions};
+use git2::{Cred, CredentialType, DiffOptions, RemoteCallbacks, Repository, StatusOptions};
 
 use super::types::*;
+
+/// Build remote callbacks with credential handling.
+/// - `use_token`: if true, also try the stored GitHub token for HTTPS auth.
+///   Set to false for background operations (e.g. auto-fetch) to avoid prompts.
+fn make_remote_callbacks<'a>(use_token: bool) -> RemoteCallbacks<'a> {
+    let mut callbacks = RemoteCallbacks::new();
+    let attempts = Cell::new(0u32);
+
+    callbacks.credentials(move |_url, username_from_url, allowed_types| {
+        let n = attempts.get();
+        if n > 4 {
+            return Err(git2::Error::from_str("too many authentication attempts"));
+        }
+        attempts.set(n + 1);
+        let username = username_from_url.unwrap_or("git");
+
+        // SSH: try agent, then key files
+        if allowed_types.contains(CredentialType::SSH_KEY) {
+            if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+                return Ok(cred);
+            }
+            if let Some(home) = dirs::home_dir() {
+                for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+                    let key_path = home.join(".ssh").join(key_name);
+                    if key_path.exists() {
+                        if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
+                            return Ok(cred);
+                        }
+                    }
+                }
+            }
+        }
+
+        // HTTPS: use stored GitHub token (never call credential_helper to avoid popups)
+        if use_token && allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
+            if let Ok(token) = super::github::load_stored_token() {
+                return Cred::userpass_plaintext("x-access-token", &token);
+            }
+        }
+
+        if allowed_types.contains(CredentialType::DEFAULT) {
+            return Cred::default();
+        }
+
+        Err(git2::Error::from_str("no suitable credentials found"))
+    });
+
+    callbacks
+}
+
+/// Fetch options for background operations (no token, fail silently).
+fn make_fetch_options_silent<'a>() -> git2::FetchOptions<'a> {
+    let mut fo = git2::FetchOptions::new();
+    fo.remote_callbacks(make_remote_callbacks(false));
+    fo
+}
+
+/// Fetch options for user-initiated operations (uses stored token).
+fn make_fetch_options<'a>() -> git2::FetchOptions<'a> {
+    let mut fo = git2::FetchOptions::new();
+    fo.remote_callbacks(make_remote_callbacks(true));
+    fo
+}
+
+fn make_push_options<'a>() -> git2::PushOptions<'a> {
+    let mut po = git2::PushOptions::new();
+    po.remote_callbacks(make_remote_callbacks(true));
+    po
+}
 
 /// Initialize a new git repository.
 #[tauri::command]
@@ -32,15 +101,12 @@ pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
             dest_path.to_path_buf()
         };
 
-        let output = Command::new("git")
-            .args(["clone", &url, &final_path.to_string_lossy()])
-            .output()
-            .map_err(|e| format!("Failed to run git clone: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git clone failed: {}", stderr));
-        }
+        let fo = make_fetch_options();
+        let mut builder = git2::build::RepoBuilder::new();
+        builder.fetch_options(fo);
+        builder
+            .clone(&url, &final_path)
+            .map_err(|e| format!("git clone failed: {}", e))?;
 
         Ok(final_path.to_string_lossy().to_string())
     })
@@ -50,7 +116,8 @@ pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
 
 /// Get the status of a git repository.
 #[tauri::command]
-pub fn git_status(path: String) -> Result<GitStatus, String> {
+pub async fn git_status(path: String) -> Result<GitStatus, String> {
+    tokio::task::spawn_blocking(move || {
     let repo = Repository::discover(&path).map_err(|_| {
         // Not a repo — return a "not a repo" status
         "not_a_repo".to_string()
@@ -180,6 +247,9 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
         is_repo: true,
         has_upstream,
     })
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 fn get_ahead_behind(repo: &Repository) -> Result<(u32, u32, bool), git2::Error> {
@@ -431,45 +501,49 @@ fn format_timestamp(secs: i64) -> String {
 
 /// List branches.
 #[tauri::command]
-pub fn git_branches(repo_path: String) -> Result<GitBranchInfo, String> {
-    let repo = Repository::discover(&repo_path)
-        .map_err(|e| format!("Failed to open repo: {}", e))?;
+pub async fn git_branches(repo_path: String) -> Result<GitBranchInfo, String> {
+    tokio::task::spawn_blocking(move || {
+        let repo = Repository::discover(&repo_path)
+            .map_err(|e| format!("Failed to open repo: {}", e))?;
 
-    let current = match repo.head() {
-        Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
-        Err(_) => {
-            repo.find_reference("HEAD")
-                .ok()
-                .and_then(|r| r.symbolic_target().map(|s| s.to_string()))
-                .and_then(|s| s.strip_prefix("refs/heads/").map(|n| n.to_string()))
-                .unwrap_or_else(|| "main".to_string())
+        let current = match repo.head() {
+            Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
+            Err(_) => {
+                repo.find_reference("HEAD")
+                    .ok()
+                    .and_then(|r| r.symbolic_target().map(|s| s.to_string()))
+                    .and_then(|s| s.strip_prefix("refs/heads/").map(|n| n.to_string()))
+                    .unwrap_or_else(|| "main".to_string())
+            }
+        };
+
+        let mut local = Vec::new();
+        let mut remote = Vec::new();
+
+        let branches = repo
+            .branches(None)
+            .map_err(|e| format!("Failed to list branches: {}", e))?;
+
+        for branch in branches {
+            let (branch, branch_type) = branch.map_err(|e| format!("Branch error: {}", e))?;
+            let name = branch.name().ok().flatten().unwrap_or("").to_string();
+            if name.is_empty() {
+                continue;
+            }
+            match branch_type {
+                git2::BranchType::Local => local.push(name),
+                git2::BranchType::Remote => remote.push(name),
+            }
         }
-    };
 
-    let mut local = Vec::new();
-    let mut remote = Vec::new();
-
-    let branches = repo
-        .branches(None)
-        .map_err(|e| format!("Failed to list branches: {}", e))?;
-
-    for branch in branches {
-        let (branch, branch_type) = branch.map_err(|e| format!("Branch error: {}", e))?;
-        let name = branch.name().ok().flatten().unwrap_or("").to_string();
-        if name.is_empty() {
-            continue;
-        }
-        match branch_type {
-            git2::BranchType::Local => local.push(name),
-            git2::BranchType::Remote => remote.push(name),
-        }
-    }
-
-    Ok(GitBranchInfo {
-        current,
-        local,
-        remote,
+        Ok(GitBranchInfo {
+            current,
+            local,
+            remote,
+        })
     })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Switch to a branch.
@@ -539,76 +613,117 @@ pub fn git_discard(repo_path: String, file_paths: Vec<String>) -> Result<(), Str
     Ok(())
 }
 
-/// Fetch from remote (shells out to git CLI for credential handling).
+/// Fetch from remote with pruning.
 #[tauri::command]
 pub async fn git_fetch(repo_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .args(["fetch", "--prune"])
-            .current_dir(&repo_path)
-            .output()
-            .map_err(|e| format!("Failed to run git fetch: {}", e))?;
+        let repo = Repository::discover(&repo_path)
+            .map_err(|e| format!("Failed to open repo: {}", e))?;
+        let mut remote = repo
+            .find_remote("origin")
+            .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git fetch failed: {}", stderr));
-        }
+        let mut fo = make_fetch_options_silent();
+        fo.prune(git2::FetchPrune::On);
+        remote
+            .fetch(&[] as &[&str], Some(&mut fo), None)
+            .map_err(|e| format!("git fetch failed: {}", e))?;
+
         Ok(())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Push to remote (shells out to git CLI for credential handling).
-/// If set_upstream is true, pushes with --set-upstream origin <branch>.
+/// Push to remote. If set_upstream is true, sets tracking branch.
 #[tauri::command]
 pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["push".to_string()];
+        let repo = Repository::discover(&repo_path)
+            .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+        let branch = match repo.head() {
+            Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
+            Err(_) => "HEAD".to_string(),
+        };
+
+        let refspec = format!("refs/heads/{}:refs/heads/{}", branch, branch);
+        let mut remote = repo
+            .find_remote("origin")
+            .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
+
+        let mut po = make_push_options();
+        remote
+            .push(&[&refspec], Some(&mut po))
+            .map_err(|e| format!("git push failed: {}", e))?;
 
         if set_upstream.unwrap_or(false) {
-            let repo = Repository::discover(&repo_path)
-                .map_err(|e| format!("Failed to open repo: {}", e))?;
-            let branch = match repo.head() {
-                Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
-                Err(_) => "HEAD".to_string(),
-            };
-            args.push("--set-upstream".to_string());
-            args.push("origin".to_string());
-            args.push(branch);
+            if let Ok(mut local_branch) = repo.find_branch(&branch, git2::BranchType::Local) {
+                let _ = local_branch.set_upstream(Some(&format!("origin/{}", branch)));
+            }
         }
 
-        let output = Command::new("git")
-            .args(&args)
-            .current_dir(&repo_path)
-            .output()
-            .map_err(|e| format!("Failed to run git push: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git push failed: {}", stderr));
-        }
         Ok(())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Pull from remote (shells out to git CLI for credential handling).
+/// Pull from remote (fetch + fast-forward merge).
 #[tauri::command]
 pub async fn git_pull(repo_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let output = Command::new("git")
-            .args(["pull"])
-            .current_dir(&repo_path)
-            .output()
-            .map_err(|e| format!("Failed to run git pull: {}", e))?;
+        let repo = Repository::discover(&repo_path)
+            .map_err(|e| format!("Failed to open repo: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git pull failed: {}", stderr));
+        let branch = repo
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .unwrap_or_else(|| "main".to_string());
+
+        // 1. Fetch
+        let mut remote = repo
+            .find_remote("origin")
+            .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
+        let mut fo = make_fetch_options();
+        remote
+            .fetch(&[&branch], Some(&mut fo), None)
+            .map_err(|e| format!("git fetch failed: {}", e))?;
+
+        // 2. Get FETCH_HEAD
+        let fetch_head = repo
+            .find_reference("FETCH_HEAD")
+            .map_err(|e| format!("No FETCH_HEAD after fetch: {}", e))?;
+        let fetch_commit = repo
+            .reference_to_annotated_commit(&fetch_head)
+            .map_err(|e| format!("Failed to resolve FETCH_HEAD: {}", e))?;
+
+        // 3. Merge analysis
+        let (analysis, _) = repo
+            .merge_analysis(&[&fetch_commit])
+            .map_err(|e| format!("Merge analysis failed: {}", e))?;
+
+        if analysis.is_up_to_date() {
+            return Ok(());
         }
-        Ok(())
+
+        if analysis.is_fast_forward() {
+            let refname = format!("refs/heads/{}", branch);
+            let mut reference = repo
+                .find_reference(&refname)
+                .map_err(|e| format!("Failed to find ref {}: {}", refname, e))?;
+            reference
+                .set_target(fetch_commit.id(), "Fast-forward pull")
+                .map_err(|e| format!("Failed to fast-forward: {}", e))?;
+            repo.set_head(&refname)
+                .map_err(|e| format!("Failed to set HEAD: {}", e))?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+                .map_err(|e| format!("Failed to checkout: {}", e))?;
+            return Ok(());
+        }
+
+        Err("Non-fast-forward merge required — please pull from a terminal".to_string())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

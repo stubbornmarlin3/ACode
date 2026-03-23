@@ -24,8 +24,8 @@
 }
 
 .root-layout--settings {
-  grid-template-columns: 1fr var(--projects-rail-width);
-  grid-template-areas: "settings projects";
+  grid-template-columns: 1fr;
+  grid-template-areas: "settings";
 }
 
 /* Welcome screen — centered open-project prompt */

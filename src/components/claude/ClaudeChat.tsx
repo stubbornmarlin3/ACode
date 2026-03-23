@@ -8,6 +8,7 @@ import {
   ToolUseEntry,
   ToolResultEntry,
 } from "../../store/claudeStore";
+import { McpStatusPanel } from "./McpStatusPanel";
 import "./ClaudeChat.css";
 
 // ── Copy button ─────────────────────────────────────────────────────
@@ -423,7 +424,89 @@ export function ClaudeChat() {
   const streamIsNewGroup = !lastMsg || lastMsg.role !== "assistant";
 
   return (
-    <div className="claude-chat" ref={scrollRef}>
+    <div className="claude-chat">
+      <div className="claude-chat__scroll" ref={scrollRef}>
+        <McpStatusPanel />
+
+        {isEmpty ? (
+          <p className="claude-chat__empty">
+            Ask Claude anything. Use <code>/clear</code> to reset the conversation.
+          </p>
+        ) : (
+          <div className="claude-chat__messages">
+            {messages.map((msg, i) => {
+              const prev = i > 0 ? messages[i - 1] : null;
+              const showRole = !prev || prev.role !== msg.role;
+              return <MessageBlock key={i} msg={msg} showRole={showRole} />;
+            })}
+
+            {/* Live streaming section */}
+            {isStreaming && (
+              <div className="claude-chat__streaming-section">
+                {streamingThinking && (
+                  <div
+                    className={`claude-chat__message claude-chat__message--assistant${
+                      streamIsNewGroup ? "" : " claude-chat__message--continuation"
+                    }`}
+                  >
+                    {streamIsNewGroup && (
+                      <span className="claude-chat__role">Claude</span>
+                    )}
+                    <div className="claude-chat__thinking-block claude-chat__thinking-block--live">
+                      <div className="claude-chat__thinking-header">
+                        <span className="claude-chat__tool-progress-spinner" />
+                        <span className="claude-chat__thinking-label">{thinkingPhrase}</span>
+                      </div>
+                      <div className="claude-chat__thinking-content claude-chat__thinking-content--live">
+                        {streamingThinking}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {streamingText && (
+                  <div
+                    className={`claude-chat__message claude-chat__message--assistant${
+                      streamIsNewGroup && !streamingThinking
+                        ? ""
+                        : " claude-chat__message--continuation"
+                    }`}
+                  >
+                    {streamIsNewGroup && !streamingThinking && (
+                      <span className="claude-chat__role">Claude</span>
+                    )}
+                    <div className="claude-chat__content claude-chat__content--streaming">
+                      <Markdown>{streamingText}</Markdown>
+                      <span className="claude-chat__cursor" />
+                    </div>
+                  </div>
+                )}
+
+                {activeToolUse && (
+                  <ToolProgress
+                    name={activeToolUse.name}
+                    input={activeToolUse.input}
+                  />
+                )}
+
+                {!streamingText && !streamingThinking && !activeToolUse &&
+                  (!lastMsg || lastMsg.role !== "assistant") && (
+                  <div className="claude-chat__message claude-chat__message--assistant">
+                    <span className="claude-chat__role">Claude</span>
+                    <div className="claude-chat__content">
+                      <span className="claude-chat__thinking-placeholder">
+                        <span className="claude-chat__tool-progress-spinner" />
+                        {thinkingPhrase}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {sessionInfo && (
         <div className="claude-chat__status-bar">
           <span>{sessionInfo.model}</span>
@@ -434,84 +517,16 @@ export function ClaudeChat() {
                 : `${(sessionInfo.contextWindow / 1000).toFixed(0)}k context`}
             </span>
           )}
-        </div>
-      )}
-
-      {isEmpty ? (
-        <p className="claude-chat__empty">
-          Ask Claude anything. Use <code>/clear</code> to reset the conversation.
-        </p>
-      ) : (
-        <div className="claude-chat__messages">
-          {messages.map((msg, i) => {
-            const prev = i > 0 ? messages[i - 1] : null;
-            const showRole = !prev || prev.role !== msg.role;
-            return <MessageBlock key={i} msg={msg} showRole={showRole} />;
-          })}
-
-          {/* Live streaming section */}
-          {isStreaming && (
-            <div className="claude-chat__streaming-section">
-              {streamingThinking && (
-                <div
-                  className={`claude-chat__message claude-chat__message--assistant${
-                    streamIsNewGroup ? "" : " claude-chat__message--continuation"
-                  }`}
-                >
-                  {streamIsNewGroup && (
-                    <span className="claude-chat__role">Claude</span>
-                  )}
-                  <div className="claude-chat__thinking-block claude-chat__thinking-block--live">
-                    <div className="claude-chat__thinking-header">
-                      <span className="claude-chat__tool-progress-spinner" />
-                      <span className="claude-chat__thinking-label">{thinkingPhrase}</span>
-                    </div>
-                    <div className="claude-chat__thinking-content claude-chat__thinking-content--live">
-                      {streamingThinking}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {streamingText && (
-                <div
-                  className={`claude-chat__message claude-chat__message--assistant${
-                    streamIsNewGroup && !streamingThinking
-                      ? ""
-                      : " claude-chat__message--continuation"
-                  }`}
-                >
-                  {streamIsNewGroup && !streamingThinking && (
-                    <span className="claude-chat__role">Claude</span>
-                  )}
-                  <div className="claude-chat__content claude-chat__content--streaming">
-                    <Markdown>{streamingText}</Markdown>
-                    <span className="claude-chat__cursor" />
-                  </div>
-                </div>
-              )}
-
-              {activeToolUse && (
-                <ToolProgress
-                  name={activeToolUse.name}
-                  input={activeToolUse.input}
-                />
-              )}
-
-              {!streamingText && !streamingThinking && !activeToolUse &&
-                (!lastMsg || lastMsg.role !== "assistant") && (
-                <div className="claude-chat__message claude-chat__message--assistant">
-                  <span className="claude-chat__role">Claude</span>
-                  <div className="claude-chat__content">
-                    <span className="claude-chat__thinking-placeholder">
-                      <span className="claude-chat__tool-progress-spinner" />
-                      {thinkingPhrase}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          {(() => {
+            const mcpTools = sessionInfo.tools.filter((t) => t.startsWith("mcp__"));
+            if (mcpTools.length === 0) return null;
+            const serverNames = [...new Set(mcpTools.map((t) => t.split("__")[1]))];
+            return (
+              <span className="claude-chat__mcp-badge" title={serverNames.join(", ")}>
+                {mcpTools.length} MCP tool{mcpTools.length !== 1 ? "s" : ""}
+              </span>
+            );
+          })()}
         </div>
       )}
     </div>

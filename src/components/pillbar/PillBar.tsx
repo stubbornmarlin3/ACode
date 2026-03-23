@@ -93,17 +93,21 @@ function useTerminalEvents() {
       if (pendingCmdProject === ownerKey) setPendingCmdProject(null);
 
       const code = event.payload.code;
-      const suffix = (code !== null && code !== 0) ? `\x1b[90m[exit ${code}]\x1b[0m\r\n` : "";
       const freshStore = useTerminalStore.getState();
       const proj = freshStore.projects[ownerKey];
       if (proj) {
+        // Trim trailing newlines to exactly one, then append exit code if non-zero
+        const trimmed = proj.outputBuffer.replace(/(\r?\n)+$/, "\r\n");
+        const suffix = (code !== null && code !== 0)
+          ? `\x1b[90m[exit ${code}]\x1b[0m\r\n`
+          : "";
         useTerminalStore.setState({
           projects: {
             ...freshStore.projects,
             [ownerKey]: {
               ...proj,
               pillCmdId: null,
-              ...(suffix ? { outputBuffer: proj.outputBuffer + suffix } : {}),
+              outputBuffer: trimmed + suffix,
             },
           },
         });
@@ -172,6 +176,7 @@ async function cleanupSession(session: PillSession) {
 
 export function AddSessionButton({ projectPath }: { projectPath: string }) {
   const [open, setOpen] = useState(false);
+  const [claudeAvailable, setClaudeAvailable] = useState(true);
   const btnRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -198,6 +203,10 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  useEffect(() => {
+    invoke<boolean>("check_claude_available").then(setClaudeAvailable);
+  }, []);
 
   const handleToggle = () => {
     if (!open && btnRef.current) {
@@ -273,7 +282,12 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
             <TerminalIcon size={13} />
             <span>Terminal</span>
           </button>
-          <button className="pill-add-dropdown__item" onClick={() => handleAdd("claude")}>
+          <button
+            className="pill-add-dropdown__item"
+            onClick={() => handleAdd("claude")}
+            disabled={!claudeAvailable}
+            title={!claudeAvailable ? "Claude CLI not installed" : undefined}
+          >
             <ClaudeIcon size={13} />
             <span>Claude</span>
           </button>

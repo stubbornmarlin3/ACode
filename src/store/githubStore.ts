@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 
 export type GitHubView = "pr-list" | "pr-detail" | "issue-list" | "issue-detail";
 
@@ -131,6 +132,7 @@ interface GitHubStore {
   setLastOutputLine: (line: string) => void;
   setShowingOutput: (showing: boolean) => void;
 
+  logout: () => Promise<void>;
   reset: () => void;
 }
 
@@ -165,6 +167,18 @@ export const useGitHubStore = create<GitHubStore>((set, get) => ({
     const { activeKey, sessions } = get();
     if (!activeKey) return;
     set({ sessions: setSession(sessions, activeKey, { showingOutput: showing }) });
+  },
+
+  logout: async () => {
+    await invoke("github_logout");
+    set({
+      isAuthenticated: false,
+      authUser: null,
+      owner: null,
+      repo: null,
+      activeKey: null,
+      sessions: {},
+    });
   },
 
   reset: () =>

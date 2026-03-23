@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { platform } from "@tauri-apps/plugin-os";
 import { type PillSessionType, type SidebarTab } from "./layoutStore";
 
 /* ── Keybinding types ── */
@@ -59,6 +60,7 @@ export interface EditorSettings {
 export interface TerminalSettings {
   fontSize: number;
   scrollback: number;
+  shell: string;
 }
 
 export interface AppearanceSettings {
@@ -104,9 +106,17 @@ const DEFAULT_EDITOR: EditorSettings = {
   lineNumbers: true,
 };
 
+function getDefaultShell(): string {
+  const os = platform();
+  if (os === "windows") return "powershell.exe";
+  if (os === "macos") return "/bin/zsh";
+  return "/bin/bash";
+}
+
 const DEFAULT_TERMINAL: TerminalSettings = {
   fontSize: 13,
   scrollback: 5000,
+  shell: getDefaultShell(),
 };
 
 const DEFAULT_APPEARANCE: AppearanceSettings = {

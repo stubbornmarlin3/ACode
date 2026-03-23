@@ -1,4 +1,5 @@
 mod git;
+mod mcp;
 
 use base64::Engine;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
@@ -11,6 +12,38 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
+
+/// Resolve a shell path to a native executable path.
+/// On Windows, this handles:
+///   - MSYS2/Git Bash Unix-style paths (e.g. "/usr/bin/bash" → "C:\Program Files\Git\usr\bin\bash.exe")
+///   - Plain executable names (e.g. "bash" → searched on PATH)
+///   - Already-native Windows paths passed through unchanged
+/// On other platforms this is a no-op.
+#[cfg(target_os = "windows")]
+fn resolve_shell(shell: &str) -> String {
+    use std::os::windows::process::CommandExt;
+    // Unix-style absolute path — convert via cygpath
+    if shell.starts_with('/') {
+        if let Ok(output) = std::process::Command::new("cygpath")
+            .args(["-w", shell])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+        {
+            if output.status.success() {
+                let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !resolved.is_empty() {
+                    return resolved;
+                }
+            }
+        }
+    }
+    shell.to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_shell(shell: &str) -> String {
+    shell.to_string()
+}
 
 #[derive(Serialize, Clone)]
 pub struct FileEntry {
@@ -92,6 +125,13 @@ fn get_config_dir(app_handle: tauri::AppHandle) -> Result<String, String> {
         .app_config_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| format!("Failed to get config dir: {}", e))
+}
+
+#[tauri::command]
+fn get_home_dir() -> Result<String, String> {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Failed to get home directory".to_string())
 }
 
 #[tauri::command]
@@ -208,12 +248,16 @@ fn open_in_terminal(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn read_dir_tree(path: String, max_depth: Option<u32>) -> Result<Vec<FileEntry>, String> {
-    let dir = Path::new(&path);
-    if !dir.is_dir() {
-        return Err(format!("Not a directory: {}", path));
-    }
-    Ok(read_dir_recursive(dir, 0, max_depth.unwrap_or(3)))
+async fn read_dir_tree(path: String, max_depth: Option<u32>) -> Result<Vec<FileEntry>, String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = Path::new(&path);
+        if !dir.is_dir() {
+            return Err(format!("Not a directory: {}", path));
+        }
+        Ok(read_dir_recursive(dir, 0, max_depth.unwrap_or(3)))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -222,78 +266,80 @@ fn read_file_contents(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn resolve_project_icon(project_path: String) -> Result<Option<String>, String> {
-    let icon_names: &[&str] = &[
-        "favicon", "logo", ".logo", "icon", "app-icon",
-    ];
-    let icon_exts: &[&str] = &["svg", "png", "ico", "jpg", "jpeg"];
-    let max_depth: usize = 3;
+async fn resolve_project_icon(project_path: String) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let icon_names: &[&str] = &[
+            "favicon", "logo", ".logo", "icon", "app-icon",
+        ];
+        let icon_exts: &[&str] = &["svg", "png", "ico", "jpg", "jpeg"];
+        let max_depth: usize = 3;
 
-    fn find_icon(
-        dir: &Path,
-        names: &[&str],
-        exts: &[&str],
-        depth: usize,
-        max_depth: usize,
-    ) -> Option<PathBuf> {
-        let entries = match fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return None,
-        };
+        fn find_icon(
+            dir: &Path,
+            names: &[&str],
+            exts: &[&str],
+            depth: usize,
+            max_depth: usize,
+        ) -> Option<PathBuf> {
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(_) => return None,
+            };
 
-        let mut subdirs = Vec::new();
+            let mut subdirs = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if names.iter().any(|n| stem.eq_ignore_ascii_case(n))
-                    && exts.iter().any(|e| ext.eq_ignore_ascii_case(e))
-                {
-                    return Some(path);
-                }
-            } else if path.is_dir() && depth < max_depth {
-                // Skip hidden dirs, node_modules, target, .git, etc.
-                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !dir_name.starts_with('.')
-                    && dir_name != "node_modules"
-                    && dir_name != "target"
-                    && dir_name != "dist"
-                    && dir_name != "build"
-                    && dir_name != ".git"
-                {
-                    subdirs.push(path);
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if names.iter().any(|n| stem.eq_ignore_ascii_case(n))
+                        && exts.iter().any(|e| ext.eq_ignore_ascii_case(e))
+                    {
+                        return Some(path);
+                    }
+                } else if path.is_dir() && depth < max_depth {
+                    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !dir_name.starts_with('.')
+                        && dir_name != "node_modules"
+                        && dir_name != "target"
+                        && dir_name != "dist"
+                        && dir_name != "build"
+                        && dir_name != ".git"
+                    {
+                        subdirs.push(path);
+                    }
                 }
             }
-        }
 
-        // BFS: check all files at current level before descending
-        for subdir in subdirs {
-            if let Some(found) = find_icon(&subdir, names, exts, depth + 1, max_depth) {
-                return Some(found);
+            for subdir in subdirs {
+                if let Some(found) = find_icon(&subdir, names, exts, depth + 1, max_depth) {
+                    return Some(found);
+                }
             }
+
+            None
         }
 
-        None
-    }
+        let root = Path::new(&project_path);
+        if let Some(icon_path) = find_icon(root, icon_names, icon_exts, 0, max_depth) {
+            let bytes = fs::read(&icon_path).map_err(|e| e.to_string())?;
+            let ext = icon_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+            let mime = match ext.to_ascii_lowercase().as_str() {
+                "svg" => "image/svg+xml",
+                "ico" => "image/x-icon",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                _ => "image/png",
+            };
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+        }
 
-    let root = Path::new(&project_path);
-    if let Some(icon_path) = find_icon(root, icon_names, icon_exts, 0, max_depth) {
-        let bytes = fs::read(&icon_path).map_err(|e| e.to_string())?;
-        let ext = icon_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
-        let mime = match ext.to_ascii_lowercase().as_str() {
-            "svg" => "image/svg+xml",
-            "ico" => "image/x-icon",
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            _ => "image/png",
-        };
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        return Ok(Some(format!("data:{};base64,{}", mime, b64)));
-    }
-
-    Ok(None)
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -414,6 +460,7 @@ struct TerminalExit {
 #[tauri::command]
 fn spawn_terminal(
     cwd: String,
+    shell: Option<String>,
     state: State<'_, Arc<TerminalState>>,
     app: tauri::AppHandle,
 ) -> Result<u32, String> {
@@ -430,20 +477,30 @@ fn spawn_terminal(
         .openpty(size)
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-        #[cfg(target_os = "windows")]
-        { std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into()) }
-        #[cfg(not(target_os = "windows"))]
-        { "/bin/zsh".into() }
-    });
+    let shell = resolve_shell(&shell.unwrap_or_else(|| {
+        std::env::var("SHELL").unwrap_or_else(|_| {
+            #[cfg(target_os = "windows")]
+            { "powershell.exe".into() }
+            #[cfg(not(target_os = "windows"))]
+            { "/bin/zsh".into() }
+        })
+    }));
+
     let mut cmd = CommandBuilder::new(&shell);
-    if !shell.contains("cmd") {
-        cmd.arg("-l"); // login shell (not for cmd.exe)
+    let shell_lower = shell.to_lowercase();
+    if !shell_lower.contains("cmd") && !shell_lower.contains("powershell") && !shell_lower.contains("pwsh") {
+        cmd.arg("-l"); // login shell (not for cmd.exe / powershell)
     }
     cmd.cwd(&cwd);
 
     // Set TERM for proper escape sequence support
     cmd.env("TERM", "xterm-256color");
+
+    // On Windows, tell bash to ignore \r in scripts with CRLF line endings
+    #[cfg(target_os = "windows")]
+    if shell_lower.contains("bash") || shell_lower.contains("sh") {
+        cmd.env("SHELLOPTS", "igncr");
+    }
 
     let mut child = pair
         .slave
@@ -593,6 +650,7 @@ struct CmdDone {
 fn run_command(
     cmd: String,
     cwd: String,
+    shell: Option<String>,
     state: State<'_, Arc<TerminalState>>,
     cmd_state: State<'_, Arc<CmdState>>,
     app: tauri::AppHandle,
@@ -616,24 +674,30 @@ fn run_command(
         .openpty(size)
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-        #[cfg(target_os = "windows")]
-        { std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into()) }
-        #[cfg(not(target_os = "windows"))]
-        { "/bin/sh".into() }
-    });
+    let shell = resolve_shell(&shell.unwrap_or_else(|| {
+        std::env::var("SHELL").unwrap_or_else(|_| {
+            #[cfg(target_os = "windows")]
+            { "powershell.exe".into() }
+            #[cfg(not(target_os = "windows"))]
+            { "/bin/sh".into() }
+        })
+    }));
+
+    let shell_lower = shell.to_lowercase();
+    let is_bash = shell_lower.contains("bash") ||
+        (shell_lower.contains("sh") && !shell_lower.contains("powershell") && !shell_lower.contains("pwsh") && !shell_lower.contains("cmd"));
 
     let mut cmd_builder = CommandBuilder::new(&shell);
-    if shell.contains("cmd") {
+    if shell_lower.contains("cmd") {
         cmd_builder.arg("/c");
+        cmd_builder.arg(&cmd);
+    } else if shell_lower.contains("powershell") || shell_lower.contains("pwsh") {
+        cmd_builder.arg("-Command");
+        cmd_builder.arg(&cmd);
     } else {
-        // On Windows, use login shell so Git Bash profile loads (sets igncr
-        // for \r\n line ending handling in scripts)
-        #[cfg(target_os = "windows")]
-        cmd_builder.arg("-l");
         cmd_builder.arg("-c");
+        cmd_builder.arg(&cmd);
     }
-    cmd_builder.arg(&cmd);
     cmd_builder.cwd(&cwd);
     cmd_builder.env("TERM", "xterm-256color");
 
@@ -757,6 +821,7 @@ struct ClaudeExit {
 fn spawn_claude(
     key: String,
     cwd: String,
+    mcp_config_path: Option<String>,
     state: State<'_, Arc<ClaudeState>>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -765,19 +830,33 @@ fn spawn_claude(
         return Ok(()); // Already running for this project
     }
 
-    let mut child = std::process::Command::new("claude")
-        .args([
+    let mut cmd = std::process::Command::new("claude");
+    cmd.args([
             "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
             "--permission-mode", "bypassPermissions",
-        ])
+        ]);
+
+    // Append MCP config file path if provided
+    if let Some(ref config_path) = mcp_config_path {
+        cmd.args(["--mcp-config", config_path]);
+    }
+
+    cmd
         .current_dir(&cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn claude: {}", e))?;
 
     let stdout = child.stdout.take();
@@ -913,6 +992,34 @@ fn kill_claude(
     Ok(())
 }
 
+// ── Claude CLI availability check ────────────────────────────────────
+
+#[tauri::command]
+async fn check_claude_available() -> bool {
+    tokio::task::spawn_blocking(|| {
+        #[cfg(target_os = "windows")]
+        let result = {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("where")
+                .arg("claude")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .status()
+        };
+        #[cfg(not(target_os = "windows"))]
+        let result = std::process::Command::new("which")
+            .arg("claude")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        result.map(|s| s.success()).unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
 // ── File system watcher ───────────────────────────────────────────────
 
 pub struct FsWatcherState {
@@ -935,42 +1042,48 @@ struct FsChangeEvent {
 }
 
 #[tauri::command]
-fn watch_directory(
+async fn watch_directory(
     path: String,
     state: State<'_, Arc<FsWatcherState>>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut handle = state.handle.lock().unwrap();
+    let watcher_state = state.inner().clone();
 
-    // Drop old watcher (stops previous watch)
-    *handle = None;
+    tokio::task::spawn_blocking(move || {
+        let mut handle = watcher_state.handle.lock().unwrap();
 
-    let watch_path = PathBuf::from(&path);
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(500),
-        move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
-            if let Ok(events) = res {
-                let paths: Vec<String> = events
-                    .iter()
-                    .filter(|e| e.kind == DebouncedEventKind::Any)
-                    .map(|e| e.path.to_string_lossy().to_string())
-                    .collect();
-                if !paths.is_empty() {
-                    let _ = app.emit("fs-change", FsChangeEvent { paths });
+        // Drop old watcher (stops previous watch)
+        *handle = None;
+
+        let watch_path = PathBuf::from(&path);
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(500),
+            move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
+                if let Ok(events) = res {
+                    let paths: Vec<String> = events
+                        .iter()
+                        .filter(|e| e.kind == DebouncedEventKind::Any)
+                        .map(|e| e.path.to_string_lossy().to_string())
+                        .collect();
+                    if !paths.is_empty() {
+                        let _ = app.emit("fs-change", FsChangeEvent { paths });
+                    }
                 }
-            }
-        },
-    )
-    .map_err(|e| format!("Failed to create watcher: {}", e))?;
+            },
+        )
+        .map_err(|e| format!("Failed to create watcher: {}", e))?;
 
-    // Start watching recursively
-    debouncer
-        .watcher()
-        .watch(&watch_path, notify::RecursiveMode::Recursive)
-        .map_err(|e| format!("Failed to watch directory: {}", e))?;
+        // Start watching recursively
+        debouncer
+            .watcher()
+            .watch(&watch_path, notify::RecursiveMode::Recursive)
+            .map_err(|e| format!("Failed to watch directory: {}", e))?;
 
-    *handle = Some(debouncer);
-    Ok(())
+        *handle = Some(debouncer);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 #[tauri::command]
@@ -1000,6 +1113,7 @@ pub fn run() {
             pick_folder,
             save_file,
             get_config_dir,
+            get_home_dir,
             create_file,
             create_dir,
             delete_path,
@@ -1017,6 +1131,8 @@ pub fn run() {
             write_claude,
             interrupt_claude,
             kill_claude,
+            check_claude_available,
+            mcp::check_mcp_server_health,
             git::local::git_init,
             git::local::git_clone,
             git::local::git_status,
@@ -1047,6 +1163,9 @@ pub fn run() {
             git::github::github_get_issue,
             git::github::github_post_issue_comment,
             git::github::github_list_user_repos,
+            git::github::github_start_device_flow,
+            git::github::github_poll_device_flow,
+            git::github::github_logout,
             watch_directory,
             unwatch_directory,
         ])

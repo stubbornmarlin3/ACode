@@ -1,0 +1,215 @@
+/* ── Live MCP status panel ── */
+
+.mcp-live {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mcp-live__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.mcp-live__header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mcp-live__chevron {
+  display: flex;
+  align-items: center;
+  color: var(--text-disabled);
+  flex-shrink: 0;
+}
+
+.mcp-live__title {
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.03em;
+}
+
+.mcp-live__summary {
+  color: var(--text-disabled);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  flex: 1;
+}
+
+.mcp-live__reconnect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+  flex-shrink: 0;
+}
+
+.mcp-live__reconnect:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mcp-live__reconnect:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Panel body ── */
+
+.mcp-live__body {
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-live__hint {
+  font-size: 11px;
+  color: var(--text-disabled);
+  margin: 4px 0 0;
+  font-style: italic;
+}
+
+/* ── Server row ── */
+
+.mcp-live__server {
+  border-radius: 5px;
+  transition: background 120ms ease;
+}
+
+.mcp-live__server:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.mcp-live__server--disabled {
+  opacity: 0.5;
+}
+
+.mcp-live__server-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+/* ── Status dot ── */
+
+.mcp-live__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcp-live__dot--connected {
+  background: #22c55e;
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
+}
+
+.mcp-live__dot--failed {
+  background: #ef4444;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+}
+
+.mcp-live__dot--disabled {
+  background: var(--text-disabled);
+  opacity: 0.4;
+}
+
+.mcp-live__server-name {
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mcp-live__tool-count {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-disabled);
+  background: rgba(139, 92, 246, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: none;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.mcp-live__tool-count:hover {
+  color: #a78bfa;
+  background: rgba(139, 92, 246, 0.18);
+}
+
+.mcp-live__status-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.mcp-live__status-label--failed {
+  color: #ef4444;
+}
+
+.mcp-live__status-label--disabled {
+  color: var(--text-disabled);
+}
+
+.mcp-live__server-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.mcp-live__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.mcp-live__action:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Tool list ── */
+
+.mcp-live__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 6px 6px 20px;
+}
+
+.mcp-live__tool {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-disabled);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}

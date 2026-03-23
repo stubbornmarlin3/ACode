@@ -1,8 +1,12 @@
+use keyring::Entry;
 use octocrab::Octocrab;
-use serde::Serialize;
-use std::process::Command;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
+
+/// GitHub OAuth App Client ID (public, not secret).
+/// Replace with your own from https://github.com/settings/developers
+const GITHUB_CLIENT_ID: &str = "Ov23lisZmsTqhejbj6EI";
 
 pub struct GitHubState {
     pub client: Mutex<Option<Octocrab>>,
@@ -98,30 +102,27 @@ pub struct RepoSummary {
     pub updated_at: String,
 }
 
-fn get_gh_token() -> Result<String, String> {
-    let output = Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .map_err(|e| format!("Failed to run gh: {}", e))?;
+const KEYRING_SERVICE: &str = "acode-github";
+const KEYRING_ACCOUNT: &str = "token";
 
-    if !output.status.success() {
-        return Err("gh auth token failed".to_string());
-    }
-
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+pub fn load_stored_token() -> Result<String, String> {
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|e| format!("Keyring error: {}", e))?;
+    let token = entry
+        .get_password()
+        .map_err(|_| "No stored GitHub token. Please set a Personal Access Token.".to_string())?;
     if token.is_empty() {
-        return Err("No token returned".to_string());
+        return Err("Stored token is empty".to_string());
     }
     Ok(token)
 }
 
-fn get_gh_user() -> String {
-    Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+fn save_token(token: &str) -> Result<(), String> {
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|e| format!("Keyring error: {}", e))?;
+    entry
+        .set_password(token)
+        .map_err(|e| format!("Failed to save token: {}", e))
 }
 
 fn ensure_client(state: &GitHubState) -> Result<Octocrab, String> {
@@ -131,7 +132,7 @@ fn ensure_client(state: &GitHubState) -> Result<Octocrab, String> {
     }
     drop(guard);
 
-    let token = get_gh_token()?;
+    let token = load_stored_token()?;
     let client = Octocrab::builder()
         .personal_token(token)
         .build()
@@ -151,17 +152,23 @@ fn author_login(author: &octocrab::models::Author) -> String {
 pub async fn github_check_auth(
     state: State<'_, std::sync::Arc<GitHubState>>,
 ) -> Result<AuthStatus, String> {
-    match get_gh_token() {
+    match load_stored_token() {
         Ok(t) => {
             let client = Octocrab::builder()
                 .personal_token(t)
                 .build()
                 .map_err(|e| format!("Failed to build client: {}", e))?;
 
+            let user = client
+                .current()
+                .user()
+                .await
+                .map(|u| u.login)
+                .unwrap_or_default();
+
             let mut guard = state.client.lock().unwrap();
             *guard = Some(client);
 
-            let user = get_gh_user();
             Ok(AuthStatus {
                 authenticated: true,
                 user,
@@ -180,7 +187,7 @@ pub async fn github_set_token(
     state: State<'_, std::sync::Arc<GitHubState>>,
 ) -> Result<(), String> {
     let client = Octocrab::builder()
-        .personal_token(token)
+        .personal_token(token.clone())
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
 
@@ -189,6 +196,9 @@ pub async fn github_set_token(
         .user()
         .await
         .map_err(|e| format!("Invalid token: {}", e))?;
+
+    // Persist to OS credential store
+    save_token(&token)?;
 
     let mut guard = state.client.lock().unwrap();
     *guard = Some(client);
@@ -315,8 +325,7 @@ pub async fn github_pr_files(
     Ok(result)
 }
 
-/// Get a PR diff. Uses `gh` CLI for simplicity since octocrab doesn't have
-/// a clean diff endpoint.
+/// Get a PR diff via GitHub REST API.
 #[tauri::command]
 pub async fn github_pr_diff(
     owner: String,
@@ -325,23 +334,30 @@ pub async fn github_pr_diff(
     path: Option<String>,
     _state: State<'_, std::sync::Arc<GitHubState>>,
 ) -> Result<String, String> {
-    let output = Command::new("gh")
-        .args([
-            "pr",
-            "diff",
-            &number.to_string(),
-            "--repo",
-            &format!("{}/{}", owner, repo),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run gh pr diff: {}", e))?;
+    let token = load_stored_token()?;
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/pulls/{}",
+        owner, repo, number
+    );
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh pr diff failed: {}", stderr));
+    let http = reqwest::Client::new();
+    let resp = http
+        .get(&url)
+        .header("Accept", "application/vnd.github.v3.diff")
+        .header("Authorization", format!("Bearer {}", token))
+        .header("User-Agent", "acode")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch PR diff: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
     }
 
-    let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+    let diff_text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
 
     // If a specific file path was requested, extract just that file's diff
     if let Some(ref filter_path) = path {
@@ -597,65 +613,235 @@ pub async fn github_list_user_repos(
     query: Option<String>,
     state: State<'_, std::sync::Arc<GitHubState>>,
 ) -> Result<Vec<RepoSummary>, String> {
-    // Validate auth is set up (side effect: initializes client if needed)
-    let _ = ensure_client(&state);
-
-    // Use `gh` CLI to list repos — it handles auth + private repos well
+    let client = ensure_client(&state)?;
     let search_query = query.as_deref().unwrap_or("").trim().to_string();
-    let use_search = !search_query.is_empty();
-    let search_term = format!("{} in:name", search_query);
 
-    let args: Vec<&str> = if use_search {
-        vec!["search", "repos", &search_term, "--json", "fullName,name,owner,description,isPrivate,sshUrl,url,updatedAt", "--limit", "30"]
+    if search_query.is_empty() {
+        // List authenticated user's repos via REST API
+        let token = load_stored_token()?;
+        let http = reqwest::Client::new();
+        let resp = http
+            .get("https://api.github.com/user/repos")
+            .query(&[("sort", "updated"), ("per_page", "30")])
+            .header("Authorization", format!("Bearer {}", token))
+            .header("User-Agent", "acode")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to list repos: {}", e))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("GitHub API returned {}", resp.status()));
+        }
+
+        let items: Vec<serde_json::Value> = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let repos = items
+            .iter()
+            .map(|r| RepoSummary {
+                full_name: r["full_name"].as_str().unwrap_or("").to_string(),
+                name: r["name"].as_str().unwrap_or("").to_string(),
+                owner: r["owner"]["login"].as_str().unwrap_or("").to_string(),
+                description: r["description"].as_str().unwrap_or("").to_string(),
+                is_private: r["private"].as_bool().unwrap_or(false),
+                clone_url: r["html_url"].as_str().unwrap_or("").to_string(),
+                ssh_url: r["ssh_url"].as_str().unwrap_or("").to_string(),
+                updated_at: r["updated_at"].as_str().unwrap_or("").to_string(),
+            })
+            .collect();
+
+        Ok(repos)
     } else {
-        vec!["repo", "list", "--json", "nameWithOwner,name,owner,description,isPrivate,sshUrl,url,updatedAt", "--limit", "30"]
-    };
+        // Search repos
+        let page = client
+            .search()
+            .repositories(&format!("{} in:name", search_query))
+            .per_page(30)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to search repos: {}", e))?;
 
-    let output = Command::new("gh")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run gh: {}", e))?;
+        let repos = page
+            .items
+            .iter()
+            .map(|r| RepoSummary {
+                full_name: r.full_name.clone().unwrap_or_default(),
+                name: r.name.clone(),
+                owner: r.owner.as_ref().map(|o| o.login.clone()).unwrap_or_default(),
+                description: r.description.clone().unwrap_or_default(),
+                is_private: r.private.unwrap_or(false),
+                clone_url: r.html_url.as_ref().map(|u| u.to_string()).unwrap_or_default(),
+                ssh_url: r.ssh_url.clone().unwrap_or_default(),
+                updated_at: r.updated_at.map(|d| d.to_string()).unwrap_or_default(),
+            })
+            .collect();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh repo list failed: {}", stderr));
+        Ok(repos)
+    }
+}
+
+// ── OAuth Device Flow ────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct DeviceFlowResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+#[derive(Deserialize)]
+struct DeviceCodeApiResponse {
+    device_code: Option<String>,
+    user_code: Option<String>,
+    verification_uri: Option<String>,
+    interval: Option<u64>,
+    expires_in: Option<u64>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DevicePollResult {
+    pub status: String, // "success", "pending", "slow_down", "expired", "error"
+    pub user: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TokenApiResponse {
+    access_token: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+/// Start the GitHub OAuth Device Flow.
+#[tauri::command]
+pub async fn github_start_device_flow() -> Result<DeviceFlowResponse, String> {
+    let http = reqwest::Client::new();
+    let resp = http
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", GITHUB_CLIENT_ID),
+            ("scope", "repo read:user"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Failed to start device flow: {}", e))?;
+
+    let body: DeviceCodeApiResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    if let Some(err) = body.error {
+        let desc = body.error_description.unwrap_or_default();
+        return Err(format!("{}: {}", err, desc));
     }
 
-    let json_str = String::from_utf8_lossy(&output.stdout);
-    let items: Vec<serde_json::Value> = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Failed to parse gh output: {}", e))?;
+    Ok(DeviceFlowResponse {
+        device_code: body.device_code.unwrap_or_default(),
+        user_code: body.user_code.unwrap_or_default(),
+        verification_uri: body.verification_uri.unwrap_or_else(|| "https://github.com/login/device".to_string()),
+        interval: body.interval.unwrap_or(5),
+        expires_in: body.expires_in.unwrap_or(900),
+    })
+}
 
-    let repos = items
-        .iter()
-        .map(|r| {
-            let full_name = r.get("nameWithOwner")
-                .or_else(|| r.get("fullName"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let name = r.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let owner = r.get("owner")
-                .and_then(|v| v.get("login").and_then(|l| l.as_str()))
-                .unwrap_or("")
-                .to_string();
-            let description = r.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let is_private = r.get("isPrivate").and_then(|v| v.as_bool()).unwrap_or(false);
-            let clone_url = r.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let ssh_url = r.get("sshUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let updated_at = r.get("updatedAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+/// Poll for the device flow token.
+#[tauri::command]
+pub async fn github_poll_device_flow(
+    device_code: String,
+    state: State<'_, std::sync::Arc<GitHubState>>,
+) -> Result<DevicePollResult, String> {
+    let http = reqwest::Client::new();
+    let resp = http
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", GITHUB_CLIENT_ID),
+            ("device_code", device_code.as_str()),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Failed to poll token: {}", e))?;
 
-            RepoSummary {
-                full_name,
-                name,
-                owner,
-                description,
-                is_private,
-                clone_url,
-                ssh_url,
-                updated_at,
-            }
-        })
-        .collect();
+    let body: TokenApiResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    Ok(repos)
+    if let Some(token) = body.access_token {
+        // Save token and initialize client
+        save_token(&token)?;
+        let client = Octocrab::builder()
+            .personal_token(token)
+            .build()
+            .map_err(|e| format!("Failed to build client: {}", e))?;
+
+        let user = client
+            .current()
+            .user()
+            .await
+            .map(|u| u.login)
+            .unwrap_or_default();
+
+        let mut guard = state.client.lock().unwrap();
+        *guard = Some(client);
+
+        return Ok(DevicePollResult {
+            status: "success".to_string(),
+            user: Some(user),
+            error: None,
+        });
+    }
+
+    match body.error.as_deref() {
+        Some("authorization_pending") => Ok(DevicePollResult {
+            status: "pending".to_string(),
+            user: None,
+            error: None,
+        }),
+        Some("slow_down") => Ok(DevicePollResult {
+            status: "slow_down".to_string(),
+            user: None,
+            error: None,
+        }),
+        Some("expired_token") => Ok(DevicePollResult {
+            status: "expired".to_string(),
+            user: None,
+            error: Some("Authorization expired. Please try again.".to_string()),
+        }),
+        Some(err) => Ok(DevicePollResult {
+            status: "error".to_string(),
+            user: None,
+            error: Some(body.error_description.unwrap_or_else(|| err.to_string())),
+        }),
+        None => Ok(DevicePollResult {
+            status: "error".to_string(),
+            user: None,
+            error: Some("Unknown error".to_string()),
+        }),
+    }
+}
+
+/// Log out of GitHub — clear stored token and cached client.
+#[tauri::command]
+pub async fn github_logout(
+    state: State<'_, std::sync::Arc<GitHubState>>,
+) -> Result<(), String> {
+    // Clear keyring
+    if let Ok(entry) = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
+        let _ = entry.delete_credential();
+    }
+    // Clear cached client
+    let mut guard = state.client.lock().unwrap();
+    *guard = None;
+    Ok(())
 }

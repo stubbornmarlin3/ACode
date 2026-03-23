@@ -222,7 +222,7 @@ export function EditorTabBar() {
                   closeFile(file.path);
                 }}
               >
-                <X size={12} />
+                <X size={14} />
               </span>
             </button>
           );

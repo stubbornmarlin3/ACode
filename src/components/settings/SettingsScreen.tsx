@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { RotateCcw, Globe, FolderDot, ArrowUpFromLine, X } from "lucide-react";
 import {
   useSettingsStore,
+  DEFAULTS,
   type KeybindAction,
   type PillsSettings,
   type SidebarSettings,
@@ -9,6 +10,7 @@ import {
 } from "../../store/settingsStore";
 import { useEditorStore } from "../../store/editorStore";
 import { type PillSessionType } from "../../store/layoutStore";
+import { McpServersSection } from "./McpServersSection";
 import "./SettingsScreen.css";
 
 /* ── Reusable controls ── */
@@ -61,6 +63,20 @@ function TextInput({ value, onChange }: { value: string; onChange: (v: string) =
       value={value}
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+}
+
+function ResetButton({ isDefault, onReset }: { isDefault: boolean; onReset: () => void }) {
+  if (isDefault) return null;
+  return (
+    <button
+      className="settings-reset-inline"
+      onClick={onReset}
+      title="Reset to default"
+      aria-label="Reset to default"
+    >
+      <RotateCcw size={11} />
+    </button>
   );
 }
 
@@ -335,6 +351,10 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="pills" settingKey="defaultSessions" />}
+                <ResetButton
+                  isDefault={JSON.stringify(pills.defaultSessions) === JSON.stringify(DEFAULTS.pills.defaultSessions)}
+                  onReset={() => pillSet("defaultSessions", DEFAULTS.pills.defaultSessions)}
+                />
                 <PillsSelector
                   value={pills.defaultSessions}
                   onChange={(v) => pillSet("defaultSessions", v)}
@@ -353,6 +373,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="fontSize" />}
+                <ResetButton isDefault={editor.fontSize === DEFAULTS.editor.fontSize} onReset={() => edSet("fontSize", DEFAULTS.editor.fontSize)} />
                 <NumberInput value={editor.fontSize} min={8} max={32} onChange={(v) => edSet("fontSize", v)} />
               </div>
             </div>
@@ -363,6 +384,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="fontFamily" />}
+                <ResetButton isDefault={editor.fontFamily === DEFAULTS.editor.fontFamily} onReset={() => edSet("fontFamily", DEFAULTS.editor.fontFamily)} />
                 <TextInput value={editor.fontFamily} onChange={(v) => edSet("fontFamily", v)} />
               </div>
             </div>
@@ -373,6 +395,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="tabSize" />}
+                <ResetButton isDefault={editor.tabSize === DEFAULTS.editor.tabSize} onReset={() => edSet("tabSize", DEFAULTS.editor.tabSize)} />
                 <NumberInput value={editor.tabSize} min={1} max={8} onChange={(v) => edSet("tabSize", v)} />
               </div>
             </div>
@@ -383,6 +406,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="lineWrapping" />}
+                <ResetButton isDefault={editor.lineWrapping === DEFAULTS.editor.lineWrapping} onReset={() => edSet("lineWrapping", DEFAULTS.editor.lineWrapping)} />
                 <Toggle checked={editor.lineWrapping} onChange={(v) => edSet("lineWrapping", v)} />
               </div>
             </div>
@@ -393,6 +417,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="lineNumbers" />}
+                <ResetButton isDefault={editor.lineNumbers === DEFAULTS.editor.lineNumbers} onReset={() => edSet("lineNumbers", DEFAULTS.editor.lineNumbers)} />
                 <Toggle checked={editor.lineNumbers} onChange={(v) => edSet("lineNumbers", v)} />
               </div>
             </div>
@@ -403,6 +428,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="editor" settingKey="minimap" />}
+                <ResetButton isDefault={editor.minimap === DEFAULTS.editor.minimap} onReset={() => edSet("minimap", DEFAULTS.editor.minimap)} />
                 <Toggle checked={editor.minimap} onChange={(v) => edSet("minimap", v)} />
               </div>
             </div>
@@ -418,6 +444,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="terminal" settingKey="fontSize" />}
+                <ResetButton isDefault={terminal.fontSize === DEFAULTS.terminal.fontSize} onReset={() => termSet("fontSize", DEFAULTS.terminal.fontSize)} />
                 <NumberInput value={terminal.fontSize} min={8} max={24} onChange={(v) => termSet("fontSize", v)} />
               </div>
             </div>
@@ -428,7 +455,19 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="terminal" settingKey="scrollback" />}
+                <ResetButton isDefault={terminal.scrollback === DEFAULTS.terminal.scrollback} onReset={() => termSet("scrollback", DEFAULTS.terminal.scrollback)} />
                 <NumberInput value={terminal.scrollback} min={500} max={50000} step={500} onChange={(v) => termSet("scrollback", v)} />
+              </div>
+            </div>
+            <div className="settings-row">
+              <span className="settings-row__label">
+                Shell
+                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="terminal" settingKey="shell" />}
+              </span>
+              <div className="settings-row__control">
+                {isWorkspace && <OverrideBadge category="terminal" settingKey="shell" />}
+                <ResetButton isDefault={terminal.shell === DEFAULTS.terminal.shell} onReset={() => termSet("shell", DEFAULTS.terminal.shell)} />
+                <TextInput value={terminal.shell} onChange={(v) => termSet("shell", v)} />
               </div>
             </div>
           </div>
@@ -443,6 +482,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="appearance" settingKey="sidebarWidth" />}
+                <ResetButton isDefault={appearance.sidebarWidth === DEFAULTS.appearance.sidebarWidth} onReset={() => appSet("sidebarWidth", DEFAULTS.appearance.sidebarWidth)} />
                 <NumberInput value={appearance.sidebarWidth} min={160} max={480} step={10} onChange={(v) => appSet("sidebarWidth", v)} />
               </div>
             </div>
@@ -453,6 +493,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="appearance" settingKey="pillPanelHeight" />}
+                <ResetButton isDefault={appearance.pillPanelHeight === DEFAULTS.appearance.pillPanelHeight} onReset={() => appSet("pillPanelHeight", DEFAULTS.appearance.pillPanelHeight)} />
                 <NumberInput value={appearance.pillPanelHeight} min={20} max={90} step={5} onChange={(v) => appSet("pillPanelHeight", v)} />
               </div>
             </div>
@@ -468,10 +509,14 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               </span>
               <div className="settings-row__control">
                 {isWorkspace && <OverrideBadge category="sidebar" settingKey="tabOrderPerProject" />}
+                <ResetButton isDefault={sidebarSettings.tabOrderPerProject === DEFAULTS.sidebar.tabOrderPerProject} onReset={() => sidebarSet("tabOrderPerProject", DEFAULTS.sidebar.tabOrderPerProject)} />
                 <Toggle checked={sidebarSettings.tabOrderPerProject} onChange={(v) => sidebarSet("tabOrderPerProject", v)} />
               </div>
             </div>
           </div>
+
+          {/* ── MCP Servers ── */}
+          <McpServersSection hasProject={!!workspaceRoot} />
 
           {/* ── Reset ── */}
           <button className="settings-reset-btn" onClick={resetAllSettings}>

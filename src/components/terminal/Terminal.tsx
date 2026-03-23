@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Copy, ClipboardPaste, Trash2 } from "lucide-react";
 import { useTerminalStore } from "../../store/terminalStore";
+import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "@xterm/xterm/css/xterm.css";
@@ -14,6 +15,8 @@ export function Terminal() {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const contextMenu = useContextMenu();
   const terminalSettings = useSettingsStore((s) => s.terminal);
+  const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
+  const shell = terminalSettings.shell || undefined;
 
   // Track how much of the buffer we've already written to xterm
   const writtenLengthRef = useRef(0);
@@ -179,12 +182,23 @@ export function Terminal() {
     [contextMenu]
   );
 
+  // Display-friendly cwd: show just the folder name
+  const cwdDisplay = workspaceRoot
+    ? workspaceRoot.replace(/\\/g, "/").split("/").pop() ?? workspaceRoot
+    : null;
+
   return (
-    <>
+    <div className="terminal-wrapper">
       <div className="terminal-container" ref={containerRef} onContextMenu={handleContextMenu} />
+      {workspaceRoot && (
+        <div className="terminal-status-bar">
+          <span className="terminal-status-bar__cwd" title={workspaceRoot}>{cwdDisplay}</span>
+          {shell && <span className="terminal-status-bar__shell">{shell.replace(/\\/g, "/").split("/").pop()}</span>}
+        </div>
+      )}
       {contextMenu.menu && (
         <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />
       )}
-    </>
+    </div>
   );
 }

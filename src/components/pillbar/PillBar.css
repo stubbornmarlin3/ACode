@@ -78,9 +78,14 @@
   transition: color 120ms ease, background 120ms ease;
 }
 
-.pill-add-dropdown__item:hover {
+.pill-add-dropdown__item:hover:not(:disabled) {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.pill-add-dropdown__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .pill-add-dropdown__separator {
@@ -330,7 +335,7 @@
 }
 
 /* Remove padding when terminal is inside — xterm handles its own */
-.pill-panel__content:has(.terminal-container) {
+.pill-panel__content:has(.terminal-wrapper) {
   padding: 0;
   overflow: hidden;
 }

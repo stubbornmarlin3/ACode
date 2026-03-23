@@ -143,13 +143,19 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
     }),
 
   removeProject: (id) =>
-    set((s) => ({
-      projects: {
-        ...s.projects,
-        projects: s.projects.projects.filter((p) => p.id !== id),
-        activeProjectId: s.projects.activeProjectId === id ? null : s.projects.activeProjectId,
-      },
-    })),
+    set((s) => {
+      const remaining = s.projects.projects.filter((p) => p.id !== id);
+      let nextActiveId = s.projects.activeProjectId;
+      if (nextActiveId === id) {
+        // Pick the next project in the list, or null if none remain
+        const idx = s.projects.projects.findIndex((p) => p.id === id);
+        const neighbor = remaining[Math.min(idx, remaining.length - 1)];
+        nextActiveId = neighbor?.id ?? null;
+      }
+      return {
+        projects: { ...s.projects, projects: remaining, activeProjectId: nextActiveId },
+      };
+    }),
 
   reorderProjects: (fromIndex, toIndex) =>
     set((s) => {

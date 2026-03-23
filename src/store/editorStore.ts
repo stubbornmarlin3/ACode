@@ -5,6 +5,7 @@ import { useTerminalStore } from "./terminalStore";
 import { useClaudeStore } from "./claudeStore";
 import { useGitStore } from "./gitStore";
 import { useSettingsStore } from "./settingsStore";
+import { useMcpStore } from "./mcpStore";
 import { useGitHubStore } from "./githubStore";
 
 /* ── Session state persistence (.acode/sessions.json) ── */
@@ -40,7 +41,6 @@ export function persistCurrentSessions(): void {
   if (!ws) return;
   const layout = useLayoutStore.getState();
   const projectSessions = layout.pillBar.sessions.filter((s) => s.projectPath === ws);
-  if (projectSessions.length === 0) return;
   const activeIdx = projectSessions.findIndex((s) => s.id === layout.pillBar.activePillId);
   saveSessions(ws, {
     sessions: projectSessions.map((s) => s.type),
@@ -170,8 +170,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return;
     }
 
-    // Load project-level settings
+    // Load project-level settings and MCP configs
     await useSettingsStore.getState().loadProject(path);
+    await useMcpStore.getState().loadProject(path);
 
     // Ensure sessions exist for this project — restore saved or use defaults
     const existingSessions = layoutState.pillBar.sessions.filter(
@@ -244,6 +245,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     // Start file system watcher for this workspace
     invoke("watch_directory", { path }).catch(() => {});
+    console.timeEnd("[perf] watchDirectory");
   },
 
   openFile: async (path, name) => {

@@ -8,6 +8,8 @@ import { useActivityStore } from "../../store/activityStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore, useActiveTerminalState } from "../../store/terminalStore";
 import { useClaudeStore, useActiveClaudeState } from "../../store/claudeStore";
+import { useMcpStore } from "../../store/mcpStore";
+import { useSettingsStore } from "../../store/settingsStore";
 import { invoke } from "@tauri-apps/api/core";
 
 /** SVG border spinner for expanded pills — uniform speed along the perimeter */
@@ -198,7 +200,9 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     const key = sessionId;
     const proj = useClaudeStore.getState().projects[key];
     if (proj?.isSpawned) return;
-    await invoke("spawn_claude", { key, cwd: workspaceRoot || "/" });
+    // Write MCP config file and pass path to Claude if servers are configured
+    const mcpConfigPath = await useMcpStore.getState().writeClaudeConfigFile();
+    await invoke("spawn_claude", { key, cwd: workspaceRoot || "/", mcpConfigPath });
     useClaudeStore.getState().setProjectSpawned(key, true);
   };
 
@@ -224,7 +228,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       termPushHistory(value);
       termSetLastCommand(value);
       pendingCmdProject = sessionId;
-      const id = await invoke<number>("run_command", { cmd: value, cwd: workspaceRoot });
+      const shell = useSettingsStore.getState().terminal.shell || undefined;
+      const id = await invoke<number>("run_command", { cmd: value, cwd: workspaceRoot, shell });
       cmdOwnerMap.set(id, sessionId);
       termSetPillCmdId(id);
       setActivityStatus(sessionId, "running");

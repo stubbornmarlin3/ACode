@@ -1,5 +1,12 @@
 .claude-chat {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.claude-chat__scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--spacing-3);
   display: flex;
@@ -7,7 +14,7 @@
   gap: var(--spacing-2);
 }
 
-/* ── Status bar ── */
+/* ── Status bar (pinned to bottom) ── */
 .claude-chat__status-bar {
   display: flex;
   justify-content: space-between;
@@ -15,9 +22,20 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-disabled);
-  padding-bottom: var(--spacing-2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--spacing-1) var(--spacing-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
+}
+
+/* ── MCP badge ── */
+.claude-chat__mcp-badge {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 /* ── Empty state ── */

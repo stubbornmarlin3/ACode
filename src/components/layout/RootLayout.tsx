@@ -11,6 +11,7 @@ import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useClaudeStore } from "../../store/claudeStore";
 import { useSettingsStore, matchesKeybind } from "../../store/settingsStore";
+import { useMcpStore } from "../../store/mcpStore";
 import { Sidebar } from "../sidebar/Sidebar";
 import { ProjectsRail } from "../projects/ProjectsRail";
 import { PillBar } from "../pillbar/PillBar";
@@ -18,6 +19,7 @@ import { EditorTabBar } from "../editor/EditorTabBar";
 import { EditorPane } from "../editor/EditorPane";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
+import { TitleBarLogo } from "./TitleBarLogo";
 
 const isMacos = platform() === "macos";
 
@@ -209,9 +211,10 @@ export function RootLayout() {
   const hasProject = activeProjectId !== null;
   const hasProjectsInRail = projects.length > 0;
 
-  // Load global settings from disk on startup
+  // Load global settings and MCP configs from disk on startup
   useEffect(() => {
     useSettingsStore.getState().loadGlobal();
+    useMcpStore.getState().loadGlobal();
   }, []);
 
   // Apply appearance settings as CSS custom properties
@@ -327,9 +330,9 @@ export function RootLayout() {
   if (settingsOpen) {
     return (
       <div className="root-layout root-layout--settings">
+        <TitleBarLogo />
         <WindowControls />
         <SettingsScreen onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
-        <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
       </div>
     );
   }
@@ -337,6 +340,7 @@ export function RootLayout() {
   if (!hasProject) {
     return (
       <div className={`root-layout root-layout--no-project${hasProjectsInRail ? " root-layout--with-rail" : ""}`}>
+        <TitleBarLogo />
         <WindowControls />
         <WelcomeScreen />
         {hasProjectsInRail && (
@@ -348,6 +352,7 @@ export function RootLayout() {
 
   return (
     <div className={`root-layout${isMacos ? " root-layout--macos" : ""}${isSidebarOpen ? "" : " root-layout--sidebar-closed"}`}>
+      <TitleBarLogo />
       <WindowControls />
       {isSidebarOpen && <Sidebar onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />}
       <div className="root-layout__center">

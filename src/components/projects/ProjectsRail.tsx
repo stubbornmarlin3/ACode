@@ -175,6 +175,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   }, [projects, updateProjectIcon]);
 
   const handleSwitchProject = async (project: { id: string; path: string }) => {
+    if (project.id === activeProjectId) return;
     setActiveProject(project.id);
     useLayoutStore.getState().setSettingsOpen(false);
     await setWorkspaceRoot(project.path);
@@ -223,9 +224,13 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
           icon: <XCircle size={12} />,
           danger: true,
           action: () => {
+            const wasActive = activeProjectId === project.id;
             removeProject(project.id);
-            if (activeProjectId === project.id) {
-              setWorkspaceRoot(null);
+            if (wasActive) {
+              // removeProject picks the next neighbor; read it and switch workspace
+              const next = useLayoutStore.getState().projects;
+              const nextProject = next.projects.find((p) => p.id === next.activeProjectId);
+              setWorkspaceRoot(nextProject?.path ?? null);
             }
           },
         },

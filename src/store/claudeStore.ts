@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { useActivityStore } from "./activityStore";
 import { useLayoutStore } from "./layoutStore";
 
@@ -75,6 +76,8 @@ interface ClaudeStore {
   setShowingOutput: (showing: boolean) => void;
   setProjectSpawned: (key: string, spawned: boolean) => void;
   clearConversation: (key: string) => void;
+  /** Kill and respawn Claude for the active project, picking up new MCP config */
+  reconnect: () => Promise<void>;
 }
 
 function parseJsonLines(buffer: string): { parsed: unknown[]; remainder: string } {
@@ -329,6 +332,45 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
   clearConversation: (key) => {
     const { projects } = get();
     set({ projects: setProj(projects, key, { ...EMPTY_PROJECT }) });
+  },
+
+  reconnect: async () => {
+    const { activeKey, projects } = get();
+    if (!activeKey) return;
+    const proj = projects[activeKey];
+
+    // Kill existing process
+    if (proj?.isSpawned) {
+      await invoke("kill_claude", { key: activeKey });
+      // Keep messages but reset session info and streaming state
+      set({
+        projects: setProj(projects, activeKey, {
+          isSpawned: false,
+          isStreaming: false,
+          sessionInfo: null,
+          rawBuffer: "",
+          streamingText: "",
+          streamingThinking: "",
+          activeToolUse: null,
+          lastOutputLine: "Reconnecting...",
+          showingOutput: true,
+        }),
+      });
+    }
+
+    // Respawn with fresh MCP config
+    // Import dynamically to avoid circular deps
+    const { useMcpStore } = await import("./mcpStore");
+    const mcpConfigPath = await useMcpStore.getState().writeClaudeConfigFile();
+
+    // Determine cwd from the key (which is the workspace path)
+    await invoke("spawn_claude", { key: activeKey, cwd: activeKey, mcpConfigPath });
+    set({
+      projects: setProj(get().projects, activeKey, {
+        isSpawned: true,
+        lastOutputLine: "Connected",
+      }),
+    });
   },
 }));
 

@@ -1,7 +1,8 @@
 {
   "sessions": [
     "terminal",
-    "github"
+    "claude",
+    "claude"
   ],
-  "activeIndex": 1
+  "activeIndex": 2
 }

@@ -1,9 +1,24 @@
-import { useState, useEffect } from "react";
-import { Github } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Github, Copy, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useGitHubStore } from "../../store/githubStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
+
+interface DeviceFlowResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+interface DevicePollResult {
+  status: string;
+  user: string | null;
+  error: string | null;
+}
 
 export function GitHubAuthGate() {
   const setAuthenticated = useGitHubStore((s) => s.setAuthenticated);
@@ -11,89 +26,164 @@ export function GitHubAuthGate() {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const fetchRemoteInfo = useGitStore((s) => s.fetchRemoteInfo);
 
-  const [checking, setChecking] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "polling" | "error">("idle");
   const [error, setError] = useState("");
+  const [userCode, setUserCode] = useState("");
+  const [copied, setCopied] = useState(false);
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [token, setToken] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [autoChecked, setAutoChecked] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const handleCheckGhAuth = async () => {
-    setChecking(true);
-    setError("");
-    try {
-      const authStatus = await invoke<{ authenticated: boolean; user: string }>(
-        "github_check_auth"
-      );
-      if (authStatus.authenticated) {
-        setAuthenticated(true, authStatus.user);
-        // Also fetch remote info if we have a workspace
-        if (workspaceRoot) {
-          await fetchRemoteInfo(workspaceRoot);
-          const info = useGitStore.getState().remoteInfo;
-          if (info?.owner && info?.repo) {
-            setRepoContext(info.owner, info.repo);
-          }
-        }
-      } else {
-        setError("GitHub CLI is not authenticated. Run 'gh auth login' or enter a token below.");
-        setShowTokenForm(true);
+  const completeAuth = async (user?: string) => {
+    setAuthenticated(true, user);
+    if (workspaceRoot) {
+      await fetchRemoteInfo(workspaceRoot);
+      const info = useGitStore.getState().remoteInfo;
+      if (info?.owner && info?.repo) {
+        setRepoContext(info.owner, info.repo);
       }
-    } catch (e) {
-      setError("GitHub CLI not found. Install 'gh' and run 'gh auth login', or enter a token below.");
-      setShowTokenForm(true);
-    } finally {
-      setChecking(false);
     }
+  };
+
+  // Auto-check for existing stored token on mount
+  useEffect(() => {
+    if (autoChecked) return;
+    setAutoChecked(true);
+    invoke<{ authenticated: boolean; user: string }>("github_check_auth").then(
+      (status) => {
+        if (status.authenticated) completeAuth(status.user);
+      }
+    );
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const handleConnect = async () => {
+    setError("");
+    setPhase("polling");
+    setCopied(false);
+
+    try {
+      const flow = await invoke<DeviceFlowResponse>("github_start_device_flow");
+      setUserCode(flow.user_code);
+
+      // Copy code to clipboard and open browser
+      await navigator.clipboard.writeText(flow.user_code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      await openUrl(flow.verification_uri);
+
+      // Poll for authorization
+      const interval = (flow.interval + 1) * 1000; // add 1s buffer
+      pollRef.current = setInterval(async () => {
+        try {
+          const result = await invoke<DevicePollResult>(
+            "github_poll_device_flow",
+            { deviceCode: flow.device_code }
+          );
+
+          if (result.status === "success") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            await completeAuth(result.user ?? undefined);
+          } else if (result.status === "expired" || result.status === "error") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setPhase("error");
+            setError(result.error ?? "Authorization failed.");
+          }
+          // "pending" and "slow_down" — keep polling
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setPhase("error");
+          setError("Failed to check authorization status.");
+        }
+      }, interval);
+    } catch (e) {
+      setPhase("error");
+      setError(String(e));
+    }
+  };
+
+  const handleCopyCode = async () => {
+    await navigator.clipboard.writeText(userCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleTokenSubmit = async () => {
     if (!token.trim()) return;
-    setChecking(true);
+    setSubmitting(true);
     setError("");
     try {
       await invoke("github_set_token", { token: token.trim() });
-      setAuthenticated(true);
-      if (workspaceRoot) {
-        await fetchRemoteInfo(workspaceRoot);
-        const info = useGitStore.getState().remoteInfo;
-        if (info?.owner && info?.repo) {
-          setRepoContext(info.owner, info.repo);
-        }
-      }
+      await completeAuth();
     } catch (e) {
       setError(String(e));
     } finally {
-      setChecking(false);
+      setSubmitting(false);
     }
   };
 
-  // Auto-check gh CLI auth on first render
-  useEffect(() => {
-    if (!autoChecked) {
-      setAutoChecked(true);
-      handleCheckGhAuth();
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Device flow polling phase
+  if (phase === "polling") {
+    return (
+      <div className="github-auth-gate">
+        <Github size={32} />
+        <span className="github-auth-gate__title">Enter code on GitHub</span>
+        <p className="github-auth-gate__desc">
+          A browser window has opened. Enter this code to connect your account:
+        </p>
+        <div className="github-auth-gate__code-box">
+          <span className="github-auth-gate__code">{userCode}</span>
+          <button
+            className="github-auth-gate__copy-btn"
+            onClick={handleCopyCode}
+            title="Copy code"
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
+        <p className="github-auth-gate__desc github-auth-gate__waiting">
+          Waiting for authorization...
+        </p>
+      </div>
+    );
+  }
 
+  // Default / error state
   return (
     <div className="github-auth-gate">
       <Github size={32} />
       <span className="github-auth-gate__title">Connect to GitHub</span>
       <p className="github-auth-gate__desc">
-        Sign in with the GitHub CLI to view and manage pull requests and issues.
+        Sign in to view and manage pull requests and issues.
       </p>
       <button
         className="github-auth-gate__btn"
-        onClick={handleCheckGhAuth}
-        disabled={checking}
+        onClick={handleConnect}
       >
         <Github size={14} />
-        {checking ? "Checking..." : "Connect with gh CLI"}
+        Connect to GitHub
+      </button>
+
+      <button
+        className="github-auth-gate__link"
+        onClick={() => setShowTokenForm(!showTokenForm)}
+      >
+        Or enter a token manually
       </button>
 
       {showTokenForm && (
         <div className="github-auth-gate__token-form">
-          <p className="github-auth-gate__desc">Or enter a Personal Access Token:</p>
           <input
             className="github-auth-gate__input"
             type="password"
@@ -105,9 +195,9 @@ export function GitHubAuthGate() {
           <button
             className="github-auth-gate__btn"
             onClick={handleTokenSubmit}
-            disabled={checking || !token.trim()}
+            disabled={submitting || !token.trim()}
           >
-            {checking ? "Authenticating..." : "Authenticate"}
+            {submitting ? "Authenticating..." : "Authenticate"}
           </button>
         </div>
       )}
