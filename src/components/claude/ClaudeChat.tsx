@@ -3,11 +3,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
 import {
-  useActiveClaudeState,
+  useClaudeStateForKey,
   ChatMessage,
   ToolUseEntry,
   ToolResultEntry,
 } from "../../store/claudeStore";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { McpStatusPanel } from "./McpStatusPanel";
 import "./ClaudeChat.css";
 
@@ -132,7 +133,7 @@ const THINKING_PHRASES = [
   "Alchemizing...",
 ];
 
-function useThinkingPhrase() {
+export function useThinkingPhrase() {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_PHRASES.length));
 
   useEffect(() => {
@@ -402,13 +403,14 @@ function MessageBlock({
 // ── Main chat component ─────────────────────────────────────────────
 
 export function ClaudeChat() {
+  const sessionKey = usePillSessionId();
   const thinkingPhrase = useThinkingPhrase();
-  const messages = useActiveClaudeState((s) => s.messages);
-  const isStreaming = useActiveClaudeState((s) => s.isStreaming);
-  const sessionInfo = useActiveClaudeState((s) => s.sessionInfo);
-  const streamingText = useActiveClaudeState((s) => s.streamingText);
-  const streamingThinking = useActiveClaudeState((s) => s.streamingThinking);
-  const activeToolUse = useActiveClaudeState((s) => s.activeToolUse);
+  const messages = useClaudeStateForKey(sessionKey, (s) => s.messages);
+  const isStreaming = useClaudeStateForKey(sessionKey, (s) => s.isStreaming);
+  const sessionInfo = useClaudeStateForKey(sessionKey, (s) => s.sessionInfo);
+  const streamingText = useClaudeStateForKey(sessionKey, (s) => s.streamingText);
+  const streamingThinking = useClaudeStateForKey(sessionKey, (s) => s.streamingThinking);
+  const activeToolUse = useClaudeStateForKey(sessionKey, (s) => s.activeToolUse);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

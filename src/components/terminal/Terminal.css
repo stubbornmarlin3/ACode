@@ -29,8 +29,14 @@
   background: transparent !important;
 }
 
-.terminal-container .xterm-cursor-layer {
+.terminal-container .xterm-cursor-layer,
+.terminal-container .xterm-cursor-block,
+.terminal-container .xterm-cursor-bar,
+.terminal-container .xterm-cursor-underline,
+.terminal-container .xterm .xterm-rows .xterm-cursor {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
 }
 
 /* ── Status bar (pinned to bottom) ── */

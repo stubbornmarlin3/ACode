@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useGitHubStore, useActiveGitHubState, type IssueDetail } from "../../store/githubStore";
+import { useGitHubStore, useGitHubStateForKey, type IssueDetail } from "../../store/githubStore";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
 
 export function IssueDetailView() {
+  const sessionKey = usePillSessionId();
   const owner = useGitHubStore((s) => s.owner);
   const repo = useGitHubStore((s) => s.repo);
-  const issueNumber = useActiveGitHubState((s) => s.selectedIssueNumber);
+  const issueNumber = useGitHubStateForKey(sessionKey, (s) => s.selectedIssueNumber);
   const navigateTo = useGitHubStore((s) => s.navigateTo);
 
   const [issue, setIssue] = useState<IssueDetail | null>(null);

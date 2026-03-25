@@ -424,7 +424,7 @@ fn tab_complete(input: String, cwd: String) -> Result<Vec<String>, String> {
     Ok(results)
 }
 
-// ── Terminal (PTY) ──────────────────────────────────────────────────
+// ── Terminal (persistent PTY shell per session) ─────────────────────
 
 struct TerminalInstance {
     master: Box<dyn portable_pty::MasterPty + Send>,
@@ -432,38 +432,44 @@ struct TerminalInstance {
 }
 
 pub struct TerminalState {
-    terminals: Mutex<HashMap<u32, TerminalInstance>>,
-    next_id: Mutex<u32>,
+    terminals: Mutex<HashMap<String, TerminalInstance>>,
 }
 
 impl Default for TerminalState {
     fn default() -> Self {
         Self {
             terminals: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
         }
     }
 }
 
 #[derive(Serialize, Clone)]
 struct TerminalOutput {
-    id: u32,
+    key: String,
     data: String,
 }
 
 #[derive(Serialize, Clone)]
 struct TerminalExit {
-    id: u32,
+    key: String,
     code: Option<u32>,
 }
 
 #[tauri::command]
 fn spawn_terminal(
+    key: String,
     cwd: String,
     shell: Option<String>,
     state: State<'_, Arc<TerminalState>>,
     app: tauri::AppHandle,
-) -> Result<u32, String> {
+) -> Result<(), String> {
+    {
+        let terminals = state.terminals.lock().unwrap();
+        if terminals.contains_key(&key) {
+            return Ok(()); // Already running for this session
+        }
+    } // Lock released before spawning
+
     let pty_system = native_pty_system();
 
     let size = PtySize {
@@ -507,13 +513,6 @@ fn spawn_terminal(
         .spawn_command(cmd)
         .map_err(|e| format!("Failed to spawn shell: {}", e))?;
 
-    let id = {
-        let mut next = state.next_id.lock().unwrap();
-        let id = *next;
-        *next += 1;
-        id
-    };
-
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -527,12 +526,52 @@ fn spawn_terminal(
     // Store the terminal
     {
         let mut terminals = state.terminals.lock().unwrap();
-        terminals.insert(id, TerminalInstance { master: pair.master, writer });
+        terminals.insert(key.clone(), TerminalInstance { master: pair.master, writer });
+    }
+
+    // Define helper function for command wrapping, then clear the screen.
+    // __a overwrites the echo line with "> cmd", then emits OSC 7770 start/end
+    // markers around the command output for pill bar capture.
+    {
+        // Each setup ends with a "ready" marker: OSC 7770;R BEL
+        // The frontend watches for this to clear setup noise from the terminal.
+        let setup = if shell_lower.contains("powershell") || shell_lower.contains("pwsh") {
+            concat!(
+                "function __a{$e=[char]27;$b=[char]7;$c=$args-join' ';",
+                "Write-Host -NoNewline \"$e[A`r$e[2K> $c`n$e]7770;S$b\";",
+                "Invoke-Expression $c;",
+                "Write-Host -NoNewline \"$e]7770;D$(Get-Location)$b$e]7770;E$b\"}\n",
+                "function prompt{''}\n",
+                "clear\n",
+                "Write-Host -NoNewline \"$([char]27)]7770;R$([char]7)\"\n"
+            )
+        } else if shell_lower.contains("cmd") {
+            "" // cmd.exe — no function support
+        } else {
+            // All POSIX shells (bash, zsh, sh, dash, ksh)
+            // Set PS1/PS2 empty — user types in pill bar, not at the prompt
+            // After command, emit cwd via OSC 7770;D for status bar tracking
+            concat!(
+                "__a(){ printf '\\033[A\\r\\033[2K> %s\\n\\033]7770;S\\007' \"$*\";",
+                "eval \"$@\";__r=$?;",
+                "printf '\\033]7770;D%s\\007\\033]7770;E\\007' \"$PWD\";return $__r;}\n",
+                "PS1='';PS2=''\n",
+                "clear\n",
+                "printf '\\033]7770;R\\007'\n"
+            )
+        };
+        if !setup.is_empty() {
+            let mut terminals = state.terminals.lock().unwrap();
+            if let Some(term) = terminals.get_mut(&key) {
+                let _ = term.writer.write_all(setup.as_bytes());
+                let _ = term.writer.flush();
+            }
+        }
     }
 
     // Spawn reader thread — streams PTY output to frontend
     let app_handle = app.clone();
-    let reader_id = id;
+    let k = key.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         loop {
@@ -540,7 +579,7 @@ fn spawn_terminal(
                 Ok(0) => break,
                 Ok(n) => {
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_handle.emit("terminal-output", TerminalOutput { id: reader_id, data });
+                    let _ = app_handle.emit("terminal-output", TerminalOutput { key: k.clone(), data });
                 }
                 Err(_) => break,
             }
@@ -549,29 +588,29 @@ fn spawn_terminal(
 
     // Spawn thread to wait for child exit
     let app_handle = app.clone();
-    let exit_id = id;
+    let k = key;
     let state_clone = state.inner().clone();
     std::thread::spawn(move || {
         let _status = child.wait();
-        let _ = app_handle.emit("terminal-exit", TerminalExit { id: exit_id, code: None });
+        let _ = app_handle.emit("terminal-exit", TerminalExit { key: k.clone(), code: None });
         // Clean up
         let mut terminals = state_clone.terminals.lock().unwrap();
-        terminals.remove(&exit_id);
+        terminals.remove(&k);
     });
 
-    Ok(id)
+    Ok(())
 }
 
 #[tauri::command]
 fn write_terminal(
-    id: u32,
+    key: String,
     data: String,
     state: State<'_, Arc<TerminalState>>,
 ) -> Result<(), String> {
     let mut terminals = state.terminals.lock().unwrap();
     let term = terminals
-        .get_mut(&id)
-        .ok_or_else(|| format!("No terminal with id {}", id))?;
+        .get_mut(&key)
+        .ok_or_else(|| format!("No terminal with key {}", key))?;
     term.writer
         .write_all(data.as_bytes())
         .map_err(|e| format!("Write failed: {}", e))?;
@@ -583,15 +622,15 @@ fn write_terminal(
 
 #[tauri::command]
 fn resize_terminal(
-    id: u32,
+    key: String,
     rows: u16,
     cols: u16,
     state: State<'_, Arc<TerminalState>>,
 ) -> Result<(), String> {
     let terminals = state.terminals.lock().unwrap();
     let term = terminals
-        .get(&id)
-        .ok_or_else(|| format!("No terminal with id {}", id))?;
+        .get(&key)
+        .ok_or_else(|| format!("No terminal with key {}", key))?;
     term.master
         .resize(PtySize {
             rows,
@@ -605,184 +644,12 @@ fn resize_terminal(
 
 #[tauri::command]
 fn kill_terminal(
-    id: u32,
+    key: String,
     state: State<'_, Arc<TerminalState>>,
 ) -> Result<(), String> {
     let mut terminals = state.terminals.lock().unwrap();
     // Dropping the terminal instance closes the PTY, which signals the child
-    terminals.remove(&id);
-    Ok(())
-}
-
-// ── PTY command runner (for pill input, with interactive stdin) ───────
-
-struct CmdInstance {
-    writer: Box<dyn IoWrite + Send>,
-    _master: Box<dyn portable_pty::MasterPty + Send>,
-}
-
-pub struct CmdState {
-    instances: Mutex<HashMap<u32, CmdInstance>>,
-}
-
-impl Default for CmdState {
-    fn default() -> Self {
-        Self {
-            instances: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[derive(Serialize, Clone)]
-struct CmdOutput {
-    id: u32,
-    data: String,
-    stream: String, // "stdout" (PTY merges stdout+stderr)
-}
-
-#[derive(Serialize, Clone)]
-struct CmdDone {
-    id: u32,
-    code: Option<i32>,
-}
-
-#[tauri::command]
-fn run_command(
-    cmd: String,
-    cwd: String,
-    shell: Option<String>,
-    state: State<'_, Arc<TerminalState>>,
-    cmd_state: State<'_, Arc<CmdState>>,
-    app: tauri::AppHandle,
-) -> Result<u32, String> {
-    let id = {
-        let mut next = state.next_id.lock().unwrap();
-        let cur = *next;
-        *next += 1;
-        cur
-    };
-
-    let pty_system = native_pty_system();
-    let size = PtySize {
-        rows: 24,
-        cols: 120,
-        pixel_width: 0,
-        pixel_height: 0,
-    };
-
-    let pair = pty_system
-        .openpty(size)
-        .map_err(|e| format!("Failed to open PTY: {}", e))?;
-
-    let shell = resolve_shell(&shell.unwrap_or_else(|| {
-        std::env::var("SHELL").unwrap_or_else(|_| {
-            #[cfg(target_os = "windows")]
-            { "powershell.exe".into() }
-            #[cfg(not(target_os = "windows"))]
-            { "/bin/sh".into() }
-        })
-    }));
-
-    let shell_lower = shell.to_lowercase();
-    let is_bash = shell_lower.contains("bash") ||
-        (shell_lower.contains("sh") && !shell_lower.contains("powershell") && !shell_lower.contains("pwsh") && !shell_lower.contains("cmd"));
-
-    let mut cmd_builder = CommandBuilder::new(&shell);
-    if shell_lower.contains("cmd") {
-        cmd_builder.arg("/c");
-        cmd_builder.arg(&cmd);
-    } else if shell_lower.contains("powershell") || shell_lower.contains("pwsh") {
-        cmd_builder.arg("-Command");
-        cmd_builder.arg(&cmd);
-    } else {
-        cmd_builder.arg("-c");
-        cmd_builder.arg(&cmd);
-    }
-    cmd_builder.cwd(&cwd);
-    cmd_builder.env("TERM", "xterm-256color");
-
-    let mut child = pair
-        .slave
-        .spawn_command(cmd_builder)
-        .map_err(|e| format!("Failed to spawn: {}", e))?;
-
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("Failed to clone reader: {}", e))?;
-
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("Failed to take writer: {}", e))?;
-
-    // Store instance for stdin writing and killing
-    cmd_state.instances.lock().unwrap().insert(id, CmdInstance {
-        writer,
-        _master: pair.master,
-    });
-
-    // Stream PTY output → cmd-output events
-    let app_h = app.clone();
-    let read_id = id;
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_h.emit("cmd-output", CmdOutput {
-                        id: read_id, data, stream: "stdout".into(),
-                    });
-                }
-            }
-        }
-    });
-
-    // Wait for exit (blocking — child is owned by this thread)
-    let app_h = app;
-    let cmd_state_clone = cmd_state.inner().clone();
-    std::thread::spawn(move || {
-        let status = child.wait();
-        let code = match status {
-            Ok(s) => Some(if s.success() { 0 } else { 1 }),
-            Err(_) => None,
-        };
-        cmd_state_clone.instances.lock().unwrap().remove(&id);
-        let _ = app_h.emit("cmd-done", CmdDone { id, code });
-    });
-
-    Ok(id)
-}
-
-#[tauri::command]
-fn write_command(
-    id: u32,
-    data: String,
-    cmd_state: State<'_, Arc<CmdState>>,
-) -> Result<(), String> {
-    let mut instances = cmd_state.instances.lock().unwrap();
-    let inst = instances
-        .get_mut(&id)
-        .ok_or_else(|| format!("No running command with id {}", id))?;
-    inst.writer
-        .write_all(data.as_bytes())
-        .map_err(|e| format!("Write failed: {}", e))?;
-    inst.writer
-        .flush()
-        .map_err(|e| format!("Flush failed: {}", e))?;
-    Ok(())
-}
-
-#[tauri::command]
-fn kill_command(
-    id: u32,
-    cmd_state: State<'_, Arc<CmdState>>,
-) -> Result<(), String> {
-    let mut instances = cmd_state.instances.lock().unwrap();
-    // Dropping the instance closes the PTY master, signaling the child
-    instances.remove(&id);
+    terminals.remove(&key);
     Ok(())
 }
 
@@ -1100,7 +967,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .manage(Arc::new(TerminalState::default()))
-        .manage(Arc::new(CmdState::default()))
         .manage(Arc::new(ClaudeState::default()))
         .manage(Arc::new(git::github::GitHubState::default()))
         .manage(Arc::new(FsWatcherState::default()))
@@ -1124,9 +990,6 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             kill_terminal,
-            run_command,
-            write_command,
-            kill_command,
             spawn_claude,
             write_claude,
             interrupt_claude,

@@ -1,4 +1,5 @@
-import { useGitHubStore, useActiveGitHubState } from "../../store/githubStore";
+import { useGitHubStore, useGitHubStateForKey } from "../../store/githubStore";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { GitHubAuthGate } from "./GitHubAuthGate";
 import { PrListView } from "./PrListView";
 import { PrDetailView } from "./PrDetailView";
@@ -7,8 +8,9 @@ import { IssueDetailView } from "./IssueDetailView";
 import "./GitHubPanel.css";
 
 export function GitHubPanel() {
+  const sessionKey = usePillSessionId();
   const isAuthenticated = useGitHubStore((s) => s.isAuthenticated);
-  const activeView = useActiveGitHubState((s) => s.activeView);
+  const activeView = useGitHubStateForKey(sessionKey, (s) => s.activeView);
 
   if (!isAuthenticated) {
     return <GitHubAuthGate />;

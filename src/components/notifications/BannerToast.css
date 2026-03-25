@@ -1,0 +1,103 @@
+/* ── Banner Toast ── */
+
+.banner-toast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  max-width: 300px;
+  background: rgba(18, 22, 30, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  transition: opacity 350ms ease, transform 350ms ease;
+}
+
+/* ── Rail placement: slides in from right ── */
+.banner-toast--rail {
+  animation: banner-slide-in-right 250ms ease-out;
+}
+
+.banner-toast--fading {
+  opacity: 0;
+  transform: translateX(12px);
+}
+
+@keyframes banner-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── Pill placement: slides in from top ── */
+.banner-toast--pill {
+  animation: banner-slide-in-down 250ms ease-out;
+}
+
+.banner-toast--fading-up {
+  opacity: 0;
+  transform: translate(-50%, calc(-100% - 12px));
+}
+
+@keyframes banner-slide-in-down {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 16px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%);
+  }
+}
+
+.banner-toast__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.banner-toast__body {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.banner-toast__project {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.banner-toast__sep {
+  color: var(--text-secondary);
+}
+
+.banner-toast__type {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.banner-toast__message {
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}

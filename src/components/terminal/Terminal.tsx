@@ -2,14 +2,17 @@ import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Copy, ClipboardPaste, Trash2 } from "lucide-react";
-import { useTerminalStore } from "../../store/terminalStore";
+import { useTerminalStore, useTerminalStateForKey } from "../../store/terminalStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
+import { invoke } from "@tauri-apps/api/core";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 
 export function Terminal() {
+  const sessionKey = usePillSessionId();
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -28,6 +31,31 @@ export function Terminal() {
       fitAddon.fit();
     } catch {}
   }, []);
+
+  /** Get the effective key: context-provided sessionId, or fallback to store activeKey */
+  const getKey = useCallback(() => sessionKey ?? useTerminalStore.getState().activeKey, [sessionKey]);
+
+  /** Sync PTY size after xterm fits. */
+  const syncResize = useCallback(() => {
+    const xterm = xtermRef.current;
+    if (!xterm) return;
+    const key = getKey();
+    const proj = key ? useTerminalStore.getState().projects[key] : null;
+    if (!key || !proj?.isSpawned) return;
+    invoke("resize_terminal", { key, rows: xterm.rows, cols: xterm.cols }).catch(() => {});
+  }, [getKey]);
+
+  // Auto-spawn shell when component mounts or project switches with no shell running
+  useEffect(() => {
+    const key = getKey();
+    if (!key || !workspaceRoot) return;
+    const proj = useTerminalStore.getState().projects[key];
+    if (proj?.isSpawned) return;
+    const sh = useSettingsStore.getState().terminal.shell || undefined;
+    invoke("spawn_terminal", { key, cwd: workspaceRoot, shell: sh })
+      .then(() => useTerminalStore.getState().setSpawned(key, true))
+      .catch(() => {});
+  }, [workspaceRoot, getKey]);
 
   // Create xterm instance and manage all buffer writes (deltas + project switches)
   useEffect(() => {
@@ -72,11 +100,12 @@ export function Terminal() {
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     xterm.open(containerRef.current);
-    xterm.write("\x1b[?25l");
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
+    xterm.write("\x1b[?25l");
 
+    // Ctrl+C copies selected text
     xterm.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.ctrlKey && e.key === "c" && xterm.hasSelection()) {
         navigator.clipboard.writeText(xterm.getSelection());
@@ -87,7 +116,7 @@ export function Terminal() {
     });
 
     // Restore buffer for the current project (handles initial mount + settings change recreation)
-    const initialKey = useTerminalStore.getState().activeKey;
+    const initialKey = sessionKey ?? useTerminalStore.getState().activeKey;
     if (initialKey) {
       const buf = useTerminalStore.getState().projects[initialKey]?.outputBuffer ?? "";
       if (buf) xterm.write(buf);
@@ -96,22 +125,40 @@ export function Terminal() {
       writtenLengthRef.current = 0;
     }
 
+    // Track which key we're currently rendering
+    let trackedKey = initialKey;
+
     // Subscribe to store changes — handles both deltas and project switches
-    const unsub = useTerminalStore.subscribe((state, prev) => {
-      const key = state.activeKey;
+    const unsub = useTerminalStore.subscribe((state) => {
+      // When bound to a specific session, always use that key
+      // When not bound, follow the global activeKey
+      const key = sessionKey ?? state.activeKey;
 
       // Active project cleared
       if (!key) {
         xterm.reset();
         xterm.write("\x1b[?25l");
         writtenLengthRef.current = 0;
+        trackedKey = null;
         return;
       }
 
       const buf = state.projects[key]?.outputBuffer ?? "";
 
-      // Project switched — full rewrite
-      if (key !== prev.activeKey) {
+      // Project switched (only happens when not bound to a specific session)
+      if (key !== trackedKey) {
+        xterm.reset();
+        xterm.write("\x1b[?25l");
+        if (buf) xterm.write(buf);
+        writtenLengthRef.current = buf.length;
+        trackedKey = key;
+        // Sync resize for the new project's PTY
+        requestAnimationFrame(() => syncResize());
+        return;
+      }
+
+      // Buffer was cleared (e.g. setup noise cleared on ready marker)
+      if (buf.length < writtenLengthRef.current) {
         xterm.reset();
         xterm.write("\x1b[?25l");
         if (buf) xterm.write(buf);
@@ -127,9 +174,15 @@ export function Terminal() {
       }
     });
 
-    requestAnimationFrame(() => fitTerminal());
+    requestAnimationFrame(() => {
+      fitTerminal();
+      syncResize();
+    });
 
-    const observer = new ResizeObserver(() => fitTerminal());
+    const observer = new ResizeObserver(() => {
+      fitTerminal();
+      syncResize();
+    });
     observer.observe(containerRef.current);
 
     return () => {
@@ -139,7 +192,7 @@ export function Terminal() {
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [fitTerminal, terminalSettings]);
+  }, [fitTerminal, syncResize, terminalSettings, sessionKey]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -161,7 +214,13 @@ export function Terminal() {
           label: "Paste",
           icon: <ClipboardPaste size={12} />,
           shortcut: "Ctrl+V",
-          action: () => {},
+          action: async () => {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+              const key = getKey();
+              if (key) invoke("write_terminal", { key, data: text }).catch(() => {});
+            }
+          },
         },
         "separator",
         {
@@ -169,9 +228,8 @@ export function Terminal() {
           icon: <Trash2 size={12} />,
           action: () => {
             xterm?.reset();
-            xterm?.write("\x1b[?25l");
             writtenLengthRef.current = 0;
-            const key = useTerminalStore.getState().activeKey;
+            const key = getKey();
             if (key) useTerminalStore.getState().clearOutputBuffer(key);
           },
         },
@@ -182,17 +240,15 @@ export function Terminal() {
     [contextMenu]
   );
 
-  // Display-friendly cwd: show just the folder name
-  const cwdDisplay = workspaceRoot
-    ? workspaceRoot.replace(/\\/g, "/").split("/").pop() ?? workspaceRoot
-    : null;
+  const termCwd = useTerminalStateForKey(sessionKey, (s) => s.cwd);
+  const displayCwd = (termCwd || workspaceRoot || "").replace(/\\/g, "/");
 
   return (
     <div className="terminal-wrapper">
       <div className="terminal-container" ref={containerRef} onContextMenu={handleContextMenu} />
-      {workspaceRoot && (
+      {(termCwd || workspaceRoot) && (
         <div className="terminal-status-bar">
-          <span className="terminal-status-bar__cwd" title={workspaceRoot}>{cwdDisplay}</span>
+          <span className="terminal-status-bar__cwd" title={displayCwd}>{displayCwd}</span>
           {shell && <span className="terminal-status-bar__shell">{shell.replace(/\\/g, "/").split("/").pop()}</span>}
         </div>
       )}

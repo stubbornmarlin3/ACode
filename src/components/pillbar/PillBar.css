@@ -9,6 +9,28 @@
   gap: var(--spacing-2);
 }
 
+/* ── Column layout ── */
+.pill-bar__columns {
+  display: flex;
+  flex-direction: row;
+  gap: var(--spacing-2);
+}
+
+.pill-bar__column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.pill-bar__column-pills {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+}
+
 /* ── Drag slot wrappers ── */
 .pill-bar__drag-slot {
   display: flex;
@@ -267,6 +289,18 @@
   padding: 0;
 }
 
+.pill-item__output-md ul,
+.pill-item__output-md ol {
+  margin: 0;
+  padding-left: 1.2em;
+  list-style-position: inside;
+}
+
+.pill-item__output-md li {
+  margin: 0;
+  padding: 0;
+}
+
 /* New prompt button (plus icon) */
 .pill-item__new-prompt {
   display: flex;
@@ -312,16 +346,25 @@
   border-color: rgba(255, 32, 32, 0.7);
 }
 
-/* ── Expanded panel ── */
-.pill-panel {
-  height: 0;
-  overflow: hidden;
-  transition: height 200ms ease;
-  border-radius: 12px;
-  margin-top: var(--spacing-1);
+/* ── Panel drag wrapper (follows pill during reorder) ── */
+.pill-bar__panel-drag {
+  transition: transform 200ms ease, opacity 200ms ease;
 }
 
-.pill-bar[data-pill-state="panel-open"] .pill-panel {
+.pill-bar__panel-drag--dragging {
+  opacity: 0.9;
+}
+
+/* ── Panel slot (inside column) ── */
+.pill-panel__slot {
+  height: 0;
+  min-width: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: height 200ms ease;
+}
+
+.pill-bar[data-pill-state="panel-open"] .pill-panel__slot {
   height: var(--pill-panel-height);
 }
 

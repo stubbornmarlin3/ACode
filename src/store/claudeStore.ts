@@ -285,7 +285,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         }
         // Set activity to unread (or idle if this session's pill is currently visible)
         const layout = useLayoutStore.getState();
-        const isVisible = key === layout.pillBar.activePillId && layout.pillBar.state === "panel-open";
+        const isVisible = layout.pillBar.openPanelIds.includes(key);
         useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
         const modelUsage = ev.modelUsage as Record<string, Record<string, number>> | undefined;
         if (modelUsage && sessionInfo) {
@@ -381,6 +381,14 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
 export function useActiveClaudeState<T>(selector: (s: ClaudeProjectState) => T): T {
   return useClaudeStore((s) => {
     const proj = getProj(s.projects, s.activeKey);
+    return selector(proj);
+  });
+}
+
+/** Selector hook to read a specific session's Claude state by key (falls back to activeKey). */
+export function useClaudeStateForKey<T>(key: string | null, selector: (s: ClaudeProjectState) => T): T {
+  return useClaudeStore((s) => {
+    const proj = getProj(s.projects, key ?? s.activeKey);
     return selector(proj);
   });
 }

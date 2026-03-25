@@ -2,7 +2,8 @@
   "sessions": [
     "terminal",
     "claude",
+    "claude",
     "claude"
   ],
-  "activeIndex": 2
+  "activeIndex": 3
 }

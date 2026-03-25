@@ -14,10 +14,48 @@ interface ActivityStore {
 export const useActivityStore = create<ActivityStore>((set, get) => ({
   sessions: {},
 
-  setStatus: (sessionId, status) =>
+  setStatus: (sessionId, status) => {
+    const prev = get().sessions[sessionId] ?? "idle";
     set((s) => ({
       sessions: { ...s.sessions, [sessionId]: status },
-    })),
+    }));
+
+    // Fire notification when activity transitions from running to idle/unread
+    if (prev === "running" && (status === "idle" || status === "unread")) {
+      // Dynamic imports to avoid circular dependencies
+      Promise.all([
+        import("./notificationStore"),
+        import("./layoutStore"),
+        import("./terminalStore"),
+        import("./claudeStore"),
+      ]).then(([{ useNotificationStore }, { useLayoutStore }, { useTerminalStore }, { useClaudeStore }]) => {
+        const layout = useLayoutStore.getState();
+        const session = layout.pillBar.sessions.find((s) => s.id === sessionId);
+        if (!session) return;
+
+        let message = "";
+        if (session.type === "terminal") {
+          message = useTerminalStore.getState().projects[sessionId]?.lastOutputLine ?? "";
+        } else if (session.type === "claude") {
+          message = useClaudeStore.getState().projects[sessionId]?.lastOutputLine ?? "";
+        }
+
+        if (!message) return;
+
+        const project = layout.projects.projects.find(
+          (p: { path: string }) => p.path === session.projectPath
+        );
+
+        useNotificationStore.getState().addNotification({
+          sessionId,
+          sessionType: session.type as "terminal" | "claude" | "github",
+          projectPath: session.projectPath,
+          projectName: project?.name ?? session.projectPath.split(/[\\/]/).pop() ?? "Unknown",
+          message,
+        });
+      });
+    }
+  },
 
   clearUnread: (sessionId) =>
     set((s) => {

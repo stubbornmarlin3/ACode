@@ -1,28 +1,30 @@
 import { useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Copy } from "lucide-react";
-import { useGitHubStore, useActiveGitHubState, updateActiveGitHubSession, type PrSummary } from "../../store/githubStore";
+import { useGitHubStore, useGitHubStateForKey, updateGitHubSessionForKey, type PrSummary } from "../../store/githubStore";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 
 export function PrListView() {
+  const sessionKey = usePillSessionId();
   const owner = useGitHubStore((s) => s.owner);
   const repo = useGitHubStore((s) => s.repo);
-  const pullRequests = useActiveGitHubState((s) => s.pullRequests);
-  const isLoading = useActiveGitHubState((s) => s.isLoading);
+  const pullRequests = useGitHubStateForKey(sessionKey, (s) => s.pullRequests);
+  const isLoading = useGitHubStateForKey(sessionKey, (s) => s.isLoading);
   const navigateTo = useGitHubStore((s) => s.navigateTo);
   const contextMenu = useContextMenu();
 
   useEffect(() => {
     if (!owner || !repo) return;
-    updateActiveGitHubSession({ isLoading: true });
+    updateGitHubSessionForKey(sessionKey, { isLoading: true });
     invoke<PrSummary[]>("github_list_prs", { owner, repo, stateFilter: "open" })
-      .then((prs) => updateActiveGitHubSession({ pullRequests: prs }))
+      .then((prs) => updateGitHubSessionForKey(sessionKey, { pullRequests: prs }))
       .catch(() => {})
-      .finally(() => updateActiveGitHubSession({ isLoading: false }));
-  }, [owner, repo]);
+      .finally(() => updateGitHubSessionForKey(sessionKey, { isLoading: false }));
+  }, [owner, repo, sessionKey]);
 
   const handleSelect = (pr: PrSummary) => {
-    updateActiveGitHubSession({ selectedPrNumber: pr.number });
+    updateGitHubSessionForKey(sessionKey, { selectedPrNumber: pr.number });
     navigateTo("pr-detail");
   };
 

@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, RefreshCw, Power, PowerOff } from "lucide-react";
-import { useActiveClaudeState, useClaudeStore } from "../../store/claudeStore";
+import { useClaudeStateForKey, useClaudeStore } from "../../store/claudeStore";
+import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { useMcpStore, type McpServerConfig } from "../../store/mcpStore";
 import "./McpStatusPanel.css";
 
@@ -12,7 +13,8 @@ interface McpServerStatus {
 }
 
 function useServerStatuses(): McpServerStatus[] {
-  const sessionInfo = useActiveClaudeState((s) => s.sessionInfo);
+  const sessionKey = usePillSessionId();
+  const sessionInfo = useClaudeStateForKey(sessionKey, (s) => s.sessionInfo);
   const claudeUserServers = useMcpStore((s) => s.claudeUserServers);
   const projectMcpJsonServers = useMcpStore((s) => s.projectMcpJsonServers);
   const globalServers = useMcpStore((s) => s.globalServers);
@@ -102,8 +104,9 @@ function ServerStatusItem({ status }: { status: McpServerStatus }) {
 
 export function McpStatusPanel() {
   const [expanded, setExpanded] = useState(false);
-  const isSpawned = useActiveClaudeState((s) => s.isSpawned);
-  const isStreaming = useActiveClaudeState((s) => s.isStreaming);
+  const sessionKey = usePillSessionId();
+  const isSpawned = useClaudeStateForKey(sessionKey, (s) => s.isSpawned);
+  const isStreaming = useClaudeStateForKey(sessionKey, (s) => s.isStreaming);
   const reconnect = useClaudeStore((s) => s.reconnect);
   const statuses = useServerStatuses();
 

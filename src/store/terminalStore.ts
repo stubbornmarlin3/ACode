@@ -1,23 +1,38 @@
 import { create } from "zustand";
 
+/** Max output buffer size in characters (~512KB). Older content is trimmed from the front. */
+const MAX_BUFFER_SIZE = 512 * 1024;
+
 export interface TerminalProjectState {
+  isSpawned: boolean;
+  /** Shell has finished initializing (__a defined, ready marker received). */
+  shellReady: boolean;
   lastOutputLine: string;
   showingOutput: boolean;
-  pillCmdId: number | null;
   lastCommand: string;
   history: string[];
   historyIndex: number;
   outputBuffer: string;
+  /** Whether we're capturing command output between OSC markers. */
+  capturingCommand: boolean;
+  /** Raw captured output between start/end markers. */
+  capturedRaw: string;
+  /** Shell's current working directory, updated after each command via OSC 7770;D. */
+  cwd: string;
 }
 
 const EMPTY_PROJECT: TerminalProjectState = {
+  isSpawned: false,
+  shellReady: false,
   lastOutputLine: "",
   showingOutput: false,
-  pillCmdId: null,
   lastCommand: "",
   history: [],
   historyIndex: -1,
   outputBuffer: "",
+  capturingCommand: false,
+  capturedRaw: "",
+  cwd: "",
 };
 
 interface TerminalStore {
@@ -27,7 +42,7 @@ interface TerminalStore {
   setActiveKey: (key: string | null) => void;
   setLastOutputLine: (line: string) => void;
   setShowingOutput: (showing: boolean) => void;
-  setPillCmdId: (id: number | null) => void;
+  setSpawned: (key: string, spawned: boolean) => void;
   setLastCommand: (cmd: string) => void;
   pushHistory: (cmd: string) => void;
   setHistoryIndex: (index: number) => void;
@@ -67,10 +82,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     set({ projects: setProj(projects, activeKey, { showingOutput: showing }) });
   },
 
-  setPillCmdId: (id) => {
-    const { activeKey, projects } = get();
-    if (!activeKey) return;
-    set({ projects: setProj(projects, activeKey, { pillCmdId: id }) });
+  setSpawned: (key, spawned) => {
+    const { projects } = get();
+    set({ projects: setProj(projects, key, { isSpawned: spawned }) });
   },
 
   setLastCommand: (cmd) => {
@@ -98,7 +112,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   appendOutput: (key, data) => {
     const { projects } = get();
     const proj = projects[key] ?? { ...EMPTY_PROJECT };
-    set({ projects: { ...projects, [key]: { ...proj, outputBuffer: proj.outputBuffer + data } } });
+    let buf = proj.outputBuffer + data;
+    if (buf.length > MAX_BUFFER_SIZE) {
+      buf = buf.slice(buf.length - MAX_BUFFER_SIZE);
+    }
+    set({ projects: { ...projects, [key]: { ...proj, outputBuffer: buf } } });
   },
 
   clearOutputBuffer: (key) => {
@@ -113,6 +131,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 export function useActiveTerminalState<T>(selector: (s: TerminalProjectState) => T): T {
   return useTerminalStore((s) => {
     const proj = getProj(s.projects, s.activeKey);
+    return selector(proj);
+  });
+}
+
+/** Selector hook to read a specific session's terminal state by key (falls back to activeKey). */
+export function useTerminalStateForKey<T>(key: string | null, selector: (s: TerminalProjectState) => T): T {
+  return useTerminalStore((s) => {
+    const proj = getProj(s.projects, key ?? s.activeKey);
     return selector(proj);
   });
 }

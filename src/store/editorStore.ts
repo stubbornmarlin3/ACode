@@ -68,7 +68,7 @@ interface ProjectEditorState {
   activeFilePath: string | null;
   expandedDirs: string[];
   activePillId: string | null;
-  pillBarState: PillBarState;
+  pillBarState: PillBarState; // kept for cache compat
   terminalShowingOutput: boolean;
 }
 
@@ -142,7 +142,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           activeFilePath,
           expandedDirs: [...expandedDirs],
           activePillId: layoutState.pillBar.activePillId,
-          pillBarState: layoutState.pillBar.state,
+          pillBarState: layoutState.pillBar.expandedPillIds.length > 0 ? "panel-open" as PillBarState : "idle" as PillBarState,
           terminalShowingOutput: termProj?.showingOutput ?? false,
         },
       };
@@ -206,9 +206,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         expandedDirs: new Set(cached.expandedDirs),
         projectStates: nextProjectStates,
       });
-      useLayoutStore.setState({
-        pillBar: { sessions, activePillId: activeId, state: cached.pillBarState },
-      });
+      useLayoutStore.setState((s) => ({
+        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds: activeId ? [activeId] : [], openPanelIds: [] },
+      }));
     } else {
       const tree = await invoke<FileEntry[]>("read_dir_tree", {
         path,
@@ -223,9 +223,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         expandedDirs: new Set<string>(),
         projectStates: nextProjectStates,
       });
-      useLayoutStore.setState({
-        pillBar: { sessions, activePillId: activeId, state: "idle" },
-      });
+      useLayoutStore.setState((s) => ({
+        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds: activeId ? [activeId] : [], openPanelIds: [] },
+      }));
     }
 
     // Set active keys for all per-session stores

@@ -20,6 +20,8 @@ import { EditorPane } from "../editor/EditorPane";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
 import { TitleBarLogo } from "./TitleBarLogo";
+import { BannerToastContainer } from "../notifications/BannerToast";
+import { useNotificationStore } from "../../store/notificationStore";
 
 const isMacos = platform() === "macos";
 
@@ -215,6 +217,7 @@ export function RootLayout() {
   useEffect(() => {
     useSettingsStore.getState().loadGlobal();
     useMcpStore.getState().loadGlobal();
+    useNotificationStore.getState().loadFromDisk();
   }, []);
 
   // Apply appearance settings as CSS custom properties
@@ -282,19 +285,14 @@ export function RootLayout() {
             e.preventDefault();
             const layout = useLayoutStore.getState();
             const ws = useEditorStore.getState().workspaceRoot;
-            const activeSession = layout.pillBar.sessions.find((s) => s.id === layout.pillBar.activePillId);
-            if (activeSession?.type === "terminal" && layout.pillBar.state === "panel-open") {
-              layout.setPillBarState("idle");
-            } else {
-              // Find first terminal session for current project
-              const termSession = layout.pillBar.sessions.find(
-                (s) => s.projectPath === ws && s.type === "terminal"
-              );
-              if (termSession) {
-                layout.setActivePillId(termSession.id);
-                useTerminalStore.getState().setActiveKey(termSession.id);
-              }
-              layout.setPillBarState("panel-open");
+            // Find first terminal session for current project
+            const termSession = layout.pillBar.sessions.find(
+              (s) => s.projectPath === ws && s.type === "terminal"
+            );
+            if (termSession) {
+              layout.setActivePillId(termSession.id);
+              useTerminalStore.getState().setActiveKey(termSession.id);
+              layout.togglePanelOpen();
             }
             return;
           }
@@ -302,18 +300,13 @@ export function RootLayout() {
             e.preventDefault();
             const layout = useLayoutStore.getState();
             const ws = useEditorStore.getState().workspaceRoot;
-            const activeSession = layout.pillBar.sessions.find((s) => s.id === layout.pillBar.activePillId);
-            if (activeSession?.type === "claude" && layout.pillBar.state === "panel-open") {
-              layout.setPillBarState("idle");
-            } else {
-              const claudeSession = layout.pillBar.sessions.find(
-                (s) => s.projectPath === ws && s.type === "claude"
-              );
-              if (claudeSession) {
-                layout.setActivePillId(claudeSession.id);
-                useClaudeStore.getState().setActiveKey(claudeSession.id);
-              }
-              layout.setPillBarState("panel-open");
+            const claudeSession = layout.pillBar.sessions.find(
+              (s) => s.projectPath === ws && s.type === "claude"
+            );
+            if (claudeSession) {
+              layout.setActivePillId(claudeSession.id);
+              useClaudeStore.getState().setActiveKey(claudeSession.id);
+              layout.togglePanelOpen();
             }
             return;
           }
@@ -346,6 +339,7 @@ export function RootLayout() {
         {hasProjectsInRail && (
           <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
         )}
+        <BannerToastContainer />
       </div>
     );
   }
@@ -366,6 +360,7 @@ export function RootLayout() {
         </div>
       </div>
       <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
+      <BannerToastContainer />
     </div>
   );
 }

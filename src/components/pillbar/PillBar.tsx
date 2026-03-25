@@ -5,7 +5,7 @@ import { Plus, Terminal as TerminalIcon, Github, XCircle, FolderOpen, GitFork } 
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
-import { useLayoutStore, genSessionId, type PillSession, type PillSessionType } from "../../store/layoutStore";
+import { useLayoutStore, genSessionId, maxPanelsForWidth, type PillSession, type PillSessionType } from "../../store/layoutStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore } from "../../store/terminalStore";
@@ -14,112 +14,186 @@ import { useActivityStore } from "../../store/activityStore";
 import { useGitHubStore } from "../../store/githubStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
-import { PillItem, cmdOwnerMap, pendingCmdProject, setPendingCmdProject } from "./PillItem";
+import { PillItem } from "./PillItem";
 import { PillPanel } from "./PillPanel";
 import { persistCurrentSessions } from "../../store/editorStore";
 
-/** Strip terminal escape sequences that clear the screen */
-function stripDestructiveEscapes(data: string): string {
+/** Strip all ANSI / control sequences for plain-text extraction. */
+function stripAnsi(data: string): string {
   return data
-    .replace(/\x1b\[\d*(?:;\d*)?[Hf]/g, "")
-    .replace(/\x1b\[[0-3]?J/g, "")
-    .replace(/\x1b\[[0-2]?K/g, "")
-    .replace(/\x1b\[\d*[AB]/g, "")
-    .replace(/\x1b\[\?(?:1049|47|1047)[hl]/g, "")
-    .replace(/\x1b\[\??\s*[su]/g, "")
-    .replace(/\x1b[78]/g, "");
+    .replace(/\x1b\[[?]?[0-9;]*[A-Za-z@`~]/g, "")
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[()][A-Z0-9]/g, "")
+    .replace(/\x1b[>=<]/g, "")
+    .replace(/[\x00-\x09\x0b-\x1f]/g, "");
 }
 
-/** Global terminal event listeners — runs once */
+/** OSC 7770 markers emitted by printf wrappers. Only real \x1b bytes (from printf output)
+ *  match — the echoed literal characters "\\033" do NOT match. */
+const OSC_START = "\x1b]7770;S\x07";
+const OSC_END = "\x1b]7770;E\x07";
+const OSC_READY = "\x1b]7770;R\x07";
+/** Matches OSC 7770;D<path>BEL — emitted by __a after each command with $PWD. */
+const OSC_CWD_RE = /\x1b\]7770;D([^\x07]*)\x07/;
+
+/** Pill preview: commands wrapped with printf OSC 7770 markers.
+ *  First printf clears echo line and re-prints the command cleanly.
+ *  Parser captures raw output between start/end markers. */
 function useTerminalEvents() {
-  const displayedCmdIdRef = useRef<number | null>(null);
+  const silenceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
     let cancelled = false;
     const unlisteners: (() => void)[] = [];
 
-    listen<{ id: number; data: string; stream: string }>("cmd-output", (event) => {
+    listen<{ key: string; data: string }>("terminal-output", (event) => {
       if (cancelled) return;
+      const { key, data } = event.payload;
+
+      // Append raw PTY data to output buffer (xterm renders it)
+      useTerminalStore.getState().appendOutput(key, data);
+
+      // Check for ready marker — shell setup is complete.
+      // Delay slightly to let the trailing prompt arrive, then clear all setup noise.
+      if (data.includes(OSC_READY)) {
+        setTimeout(() => {
+          const s = useTerminalStore.getState();
+          const p = s.projects[key];
+          if (p) {
+            useTerminalStore.setState({
+              projects: { ...s.projects, [key]: { ...p, shellReady: true, outputBuffer: "" } },
+            });
+          }
+        }, 300);
+        return;
+      }
+
+      // Extract cwd from OSC 7770;D marker if present
+      const cwdMatch = data.match(OSC_CWD_RE);
+      if (cwdMatch) {
+        const freshStore = useTerminalStore.getState();
+        const p = freshStore.projects[key];
+        if (p) {
+          useTerminalStore.setState({
+            projects: { ...freshStore.projects, [key]: { ...p, cwd: cwdMatch[1] } },
+          });
+        }
+      }
+
       const store = useTerminalStore.getState();
-      let ownerKey = cmdOwnerMap.get(event.payload.id)
-        ?? Object.entries(store.projects).find(([, p]) => p.pillCmdId === event.payload.id)?.[0];
-      if (!ownerKey && pendingCmdProject) {
-        ownerKey = pendingCmdProject;
-        cmdOwnerMap.set(event.payload.id, ownerKey);
+      const proj = store.projects[key];
+      if (!proj) return;
+
+      // --- Parse OSC markers to capture command output for pill preview ---
+      let { capturingCommand, capturedRaw } = proj;
+      let remaining = data;
+      let updated = false;
+
+      while (remaining.length > 0) {
+        if (!capturingCommand) {
+          const startIdx = remaining.indexOf(OSC_START);
+          if (startIdx === -1) break;
+          capturingCommand = true;
+          capturedRaw = "";
+          remaining = remaining.slice(startIdx + OSC_START.length);
+          updated = true;
+        } else {
+          const endIdx = remaining.indexOf(OSC_END);
+          if (endIdx === -1) {
+            capturedRaw += remaining;
+            remaining = "";
+            updated = true;
+          } else {
+            capturedRaw += remaining.slice(0, endIdx);
+            capturingCommand = false;
+            remaining = remaining.slice(endIdx + OSC_END.length);
+            updated = true;
+          }
+        }
       }
-      if (!ownerKey) return;
-      const proj = store.projects[ownerKey] ?? {};
 
-      let header = "";
-      if (displayedCmdIdRef.current !== event.payload.id) {
-        displayedCmdIdRef.current = event.payload.id;
-        header = `\x1b[90m❯ ${(proj as { lastCommand?: string }).lastCommand ?? ""}\x1b[0m\r\n`;
-      }
+      if (updated) {
+        const clean = stripAnsi(capturedRaw);
+        const lines = clean.split(/[\r\n]+/).filter((l) => l.trim().length > 0);
+        const lastLine = lines.length > 0 ? lines[lines.length - 1] : "";
 
-      const clean = event.payload.data
-        .replace(/\x1b\[[?]?[0-9;]*[A-Za-z@`~]/g, "")
-        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-        .replace(/\x1b[()][A-Z0-9]/g, "")
-        .replace(/\x1b[>=<]/g, "")
-        .replace(/[\x00-\x09\x0b-\x1f]/g, "");
-      const lines = clean.split(/[\r\n]+/).filter((l) => l.trim().length > 0);
-      const safeData = stripDestructiveEscapes(event.payload.data);
-
-      const fresh = useTerminalStore.getState();
-      const freshProj = fresh.projects[ownerKey!];
-      const prevBuffer = freshProj?.outputBuffer ?? "";
-      const newProj = {
-        ...(freshProj ?? { lastOutputLine: "", showingOutput: false, pillCmdId: null, lastCommand: "", history: [], historyIndex: -1, outputBuffer: "" }),
-        outputBuffer: prevBuffer + header + safeData,
-        ...(lines.length > 0 ? { lastOutputLine: lines[lines.length - 1], showingOutput: true } : {}),
-      };
-      useTerminalStore.setState({
-        projects: { ...fresh.projects, [ownerKey!]: newProj },
-      });
-    }).then((u) => unlisteners.push(u));
-
-    listen<{ id: number; code: number | null }>("cmd-done", (event) => {
-      if (cancelled) return;
-      const store = useTerminalStore.getState();
-      let ownerKey = cmdOwnerMap.get(event.payload.id)
-        ?? Object.entries(store.projects).find(([, p]) => p.pillCmdId === event.payload.id)?.[0];
-      if (!ownerKey && pendingCmdProject) {
-        ownerKey = pendingCmdProject;
-        cmdOwnerMap.set(event.payload.id, ownerKey);
-      }
-      if (!ownerKey) return;
-
-      cmdOwnerMap.delete(event.payload.id);
-      if (pendingCmdProject === ownerKey) setPendingCmdProject(null);
-
-      const code = event.payload.code;
-      const freshStore = useTerminalStore.getState();
-      const proj = freshStore.projects[ownerKey];
-      if (proj) {
-        // Trim trailing newlines to exactly one, then append exit code if non-zero
-        const trimmed = proj.outputBuffer.replace(/(\r?\n)+$/, "\r\n");
-        const suffix = (code !== null && code !== 0)
-          ? `\x1b[90m[exit ${code}]\x1b[0m\r\n`
-          : "";
         useTerminalStore.setState({
           projects: {
-            ...freshStore.projects,
-            [ownerKey]: {
+            ...store.projects,
+            [key]: {
               ...proj,
-              pillCmdId: null,
-              outputBuffer: trimmed + suffix,
+              outputBuffer: useTerminalStore.getState().projects[key]?.outputBuffer ?? proj.outputBuffer,
+              capturingCommand,
+              capturedRaw,
+              lastOutputLine: lastLine || proj.lastOutputLine,
+              showingOutput: lastLine.length > 0 || proj.showingOutput,
             },
           },
         });
+
+        // If capture just ended (end marker found), mark command done
+        if (!capturingCommand) {
+          const layout = useLayoutStore.getState();
+          const isVisible = layout.pillBar.openPanelIds.includes(key);
+          useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
+          if (silenceTimers.current[key]) {
+            clearTimeout(silenceTimers.current[key]);
+            delete silenceTimers.current[key];
+          }
+          return;
+        }
+
+        // Currently capturing (between start and end markers) — mark running
+        useActivityStore.getState().setStatus(key, "running");
+        if (silenceTimers.current[key]) clearTimeout(silenceTimers.current[key]);
+        silenceTimers.current[key] = setTimeout(() => {
+          const layout = useLayoutStore.getState();
+          const isVisible = layout.pillBar.openPanelIds.includes(key);
+          useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
+        }, 2000);
       }
+    }).then((u) => unlisteners.push(u));
+
+    listen<{ key: string; code: number | null }>("terminal-exit", (event) => {
+      if (cancelled) return;
+      const { key } = event.payload;
+
+      // Mark shell as dead and not ready
+      const s = useTerminalStore.getState();
+      const p = s.projects[key];
+      if (p) {
+        useTerminalStore.setState({
+          projects: { ...s.projects, [key]: { ...p, isSpawned: false, shellReady: false } },
+        });
+      }
+
+      if (silenceTimers.current[key]) {
+        clearTimeout(silenceTimers.current[key]);
+        delete silenceTimers.current[key];
+      }
+
       const layout = useLayoutStore.getState();
-      const isVisible = ownerKey === layout.pillBar.activePillId && layout.pillBar.state === "panel-open";
-      useActivityStore.getState().setStatus(ownerKey, isVisible ? "idle" : "unread");
+      const isVisible = layout.pillBar.openPanelIds.includes(key);
+      useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
+
+      // Auto-respawn the shell if the session still exists
+      const session = layout.pillBar.sessions.find((sess) => sess.id === key && sess.type === "terminal");
+      if (session) {
+        const workspaceRoot = useEditorStore.getState().workspaceRoot;
+        if (workspaceRoot) {
+          const shell = useSettingsStore.getState().terminal.shell || undefined;
+          invoke("spawn_terminal", { key, cwd: workspaceRoot, shell })
+            .then(() => useTerminalStore.getState().setSpawned(key, true))
+            .catch(() => {});
+        }
+      }
     }).then((u) => unlisteners.push(u));
 
     return () => {
       cancelled = true;
       unlisteners.forEach((u) => u());
+      Object.values(silenceTimers.current).forEach(clearTimeout);
+      silenceTimers.current = {};
     };
   }, []);
 }
@@ -152,8 +226,8 @@ async function cleanupSession(session: PillSession) {
   if (session.type === "terminal") {
     const termState = useTerminalStore.getState();
     const proj = termState.projects[session.id];
-    if (proj?.pillCmdId !== null && proj?.pillCmdId !== undefined) {
-      await invoke("kill_command", { id: proj.pillCmdId }).catch(() => {});
+    if (proj?.isSpawned) {
+      await invoke("kill_terminal", { key: session.id }).catch(() => {});
     }
     // Remove from store
     const { projects, ...rest } = useTerminalStore.getState();
@@ -319,12 +393,53 @@ export function PillBar() {
 
   const pillBar = useLayoutStore((s) => s.pillBar);
   const setActivePillId = useLayoutStore((s) => s.setActivePillId);
-  const setPillBarState = useLayoutStore((s) => s.setPillBarState);
+  const togglePillExpanded = useLayoutStore((s) => s.togglePillExpanded);
+  const togglePanelOpen = useLayoutStore((s) => s.togglePanelOpen);
+  const setMaxPanels = useLayoutStore((s) => s.setMaxPanels);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
   const reorderSessions = useLayoutStore((s) => s.reorderSessions);
   const isRepo = useGitStore((s) => s.isRepo);
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const contextMenu = useContextMenu();
+  const centerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  const clickSwallowRef = useRef<((e: MouseEvent) => void) | null>(null);
+
+  // Callback ref for the pill-bar div — sets up ResizeObserver + click swallowing
+  const pillBarRef = useCallback((node: HTMLDivElement | null) => {
+    // Clean up old observer and click handler
+    if (centerRef.current && clickSwallowRef.current) {
+      centerRef.current.removeEventListener("click", clickSwallowRef.current, true);
+    }
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    centerRef.current = node;
+    if (!node) return;
+
+    // ResizeObserver for maxPanels
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setMaxPanels(maxPanelsForWidth(entry.contentRect.width));
+      }
+    });
+    observer.observe(node);
+    observerRef.current = observer;
+    setMaxPanels(maxPanelsForWidth(node.clientWidth));
+
+    // Click swallowing after drag
+    const handler = (e: MouseEvent) => {
+      if (didDragRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        didDragRef.current = false;
+      }
+    };
+    clickSwallowRef.current = handler;
+    node.addEventListener("click", handler, true);
+  }, [setMaxPanels]);
 
   // Auto-create a GitHub session when repo detected + github is in default pills but missing
   useEffect(() => {
@@ -348,18 +463,14 @@ export function PillBar() {
     setTimeout(() => persistCurrentSessions(), 0);
   }, [isRepo, workspaceRoot]);
 
-  const togglePanel = () => {
-    setPillBarState(pillBar.state === "panel-open" ? "idle" : "panel-open");
-  };
+
 
   // Get sessions for current project
   const projectSessions = pillBar.sessions.filter(
     (s) => s.projectPath === workspaceRoot
   );
 
-  // Determine active session and effective mode for the panel
-  const activeSession = pillBar.sessions.find((s) => s.id === pillBar.activePillId);
-  const effectiveMode: "terminal" | "claude" | "github" = activeSession?.type ?? "terminal";
+  const hasOpenPanels = projectSessions.some((s) => pillBar.openPanelIds.includes(s.id));
 
   const handlePillClick = (session: PillSession) => {
     setActivePillId(session.id);
@@ -372,6 +483,10 @@ export function PillBar() {
     }
   };
 
+  const handleLabelClick = () => {
+    togglePanelOpen();
+  };
+
   // ── Context menu ──
   const handlePillContext = useCallback(
     (e: React.MouseEvent, session: PillSession) => {
@@ -381,8 +496,8 @@ export function PillBar() {
           icon: <XCircle size={12} />,
           danger: true,
           action: async () => {
-            await cleanupSession(session);
             removePillSession(session.id);
+            await cleanupSession(session);
             const layout = useLayoutStore.getState();
             const newActive = layout.pillBar.sessions.find(
               (s) => s.id === layout.pillBar.activePillId
@@ -421,20 +536,6 @@ export function PillBar() {
 
   const DRAG_THRESHOLD = 8; // px before drag activates
 
-  // Swallow the click that fires after a drag ends
-  useEffect(() => {
-    const row = rowRef.current;
-    if (!row) return;
-    const handler = (e: MouseEvent) => {
-      if (didDragRef.current) {
-        e.stopPropagation();
-        e.preventDefault();
-        didDragRef.current = false;
-      }
-    };
-    row.addEventListener("click", handler, true);
-    return () => row.removeEventListener("click", handler, true);
-  }, []);
 
   const handlePointerDown = useCallback(
     (index: number) => (e: React.PointerEvent) => {
@@ -568,31 +669,111 @@ export function PillBar() {
 
   if (projectSessions.length === 0) return null;
 
+  // Split sessions into expanded (left) and collapsed (right)
+  const expandedSessions = projectSessions.filter((s) => pillBar.expandedPillIds.includes(s.id));
+  const collapsedSessions = projectSessions.filter((s) => !pillBar.expandedPillIds.includes(s.id));
+
   return (
-    <div className="pill-bar" data-pill-state={pillBar.state}>
-      <div className="pill-bar__row" ref={rowRef}>
-        {projectSessions.map((session, index) => {
-          const [slotClass, slotStyle] = getSlotProps(index);
+    <div className="pill-bar" data-pill-state={hasOpenPanels ? "panel-open" : "idle"} ref={pillBarRef}>
+      <div className="pill-bar__columns" ref={rowRef}>
+        {expandedSessions.map((session, colIdx) => {
+          const isLastColumn = colIdx === expandedSessions.length - 1;
+          const origIndex = projectSessions.indexOf(session);
+          const [slotClass, slotStyle] = getSlotProps(origIndex);
           return (
-          <div
-            key={session.id}
-            className={slotClass}
-            style={slotStyle}
-            onPointerDown={handlePointerDown(index)}
-            onContextMenu={(e) => handlePillContext(e, session)}
-          >
-            <PillItem
-              sessionId={session.id}
-              sessionType={session.type}
-              isExpanded={pillBar.activePillId === session.id}
-              onCollapsedClick={() => handlePillClick(session)}
-              onLabelClick={togglePanel}
-            />
-          </div>
+            <div key={session.id} className="pill-bar__column">
+              {/* Pill row for this column */}
+              <div className="pill-bar__column-pills">
+                <div
+                  className={slotClass}
+                  style={slotStyle}
+                  onPointerDown={handlePointerDown(origIndex)}
+                  onContextMenu={(e) => handlePillContext(e, session)}
+                >
+                  <PillItem
+                    sessionId={session.id}
+                    sessionType={session.type}
+                    isExpanded={true}
+                    onCollapsedClick={() => handlePillClick(session)}
+                    onLabelClick={handleLabelClick}
+                    onCollapse={() => togglePillExpanded(session.id)}
+                    onRemove={async () => {
+                      removePillSession(session.id);
+                      await cleanupSession(session);
+                      persistCurrentSessions();
+                    }}
+                  />
+                </div>
+                {/* Collapsed pills live in the last column's pill row */}
+                {isLastColumn && collapsedSessions.map((cs) => {
+                  const csIndex = projectSessions.indexOf(cs);
+                  const [csClass, csStyle] = getSlotProps(csIndex);
+                  return (
+                    <div
+                      key={cs.id}
+                      className={csClass}
+                      style={csStyle}
+                      onPointerDown={handlePointerDown(csIndex)}
+                      onContextMenu={(e) => handlePillContext(e, cs)}
+                    >
+                      <PillItem
+                        sessionId={cs.id}
+                        sessionType={cs.type}
+                        isExpanded={false}
+                        onCollapsedClick={() => handlePillClick(cs)}
+                        onLabelClick={handleLabelClick}
+                        onCollapse={() => togglePillExpanded(cs.id)}
+                        onRemove={async () => {
+                          removePillSession(cs.id);
+                          await cleanupSession(cs);
+                          persistCurrentSessions();
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Panel for this column — follows pill during drag */}
+              {hasOpenPanels && pillBar.openPanelIds.includes(session.id) && (
+                <div
+                  className={dragFromIndex === origIndex ? "pill-bar__panel-drag pill-bar__panel-drag--dragging" : "pill-bar__panel-drag"}
+                  style={slotStyle}
+                >
+                  <PillPanel sessionId={session.id} mode={session.type} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {/* If nothing is expanded, just render collapsed pills in a row */}
+        {expandedSessions.length === 0 && collapsedSessions.map((session) => {
+          const origIndex = projectSessions.indexOf(session);
+          const [slotClass, slotStyle] = getSlotProps(origIndex);
+          return (
+            <div
+              key={session.id}
+              className={slotClass}
+              style={slotStyle}
+              onPointerDown={handlePointerDown(origIndex)}
+              onContextMenu={(e) => handlePillContext(e, session)}
+            >
+              <PillItem
+                sessionId={session.id}
+                sessionType={session.type}
+                isExpanded={false}
+                onCollapsedClick={() => handlePillClick(session)}
+                onLabelClick={handleLabelClick}
+                onCollapse={() => togglePillExpanded(session.id)}
+                onRemove={async () => {
+                  removePillSession(session.id);
+                  await cleanupSession(session);
+                  persistCurrentSessions();
+                }}
+              />
+            </div>
           );
         })}
       </div>
-      <PillPanel mode={effectiveMode} />
       {contextMenu.menu && (
         <ContextMenu
           x={contextMenu.menu.x}

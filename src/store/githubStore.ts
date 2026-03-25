@@ -200,9 +200,25 @@ export function useActiveGitHubState<T>(selector: (s: GitHubSessionState) => T):
   });
 }
 
+/** Selector hook to read a specific session's GitHub state by key (falls back to activeKey). */
+export function useGitHubStateForKey<T>(key: string | null, selector: (s: GitHubSessionState) => T): T {
+  return useGitHubStore((s) => {
+    const session = getSession(s.sessions, key ?? s.activeKey);
+    return selector(session);
+  });
+}
+
 /** Update the active session's state (for use in components via setState-style calls) */
 export function updateActiveGitHubSession(partial: Partial<GitHubSessionState>): void {
   const { activeKey, sessions } = useGitHubStore.getState();
   if (!activeKey) return;
   useGitHubStore.setState({ sessions: setSession(sessions, activeKey, partial) });
+}
+
+/** Update a specific session's state by key (falls back to activeKey) */
+export function updateGitHubSessionForKey(key: string | null, partial: Partial<GitHubSessionState>): void {
+  const { activeKey, sessions } = useGitHubStore.getState();
+  const effectiveKey = key ?? activeKey;
+  if (!effectiveKey) return;
+  useGitHubStore.setState({ sessions: setSession(sessions, effectiveKey, partial) });
 }

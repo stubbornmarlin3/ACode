@@ -3,11 +3,12 @@ import { Terminal, CornerDownLeft, Plus, Square, Skull, Github } from "lucide-re
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
-import { useActiveGitHubState } from "../../store/githubStore";
+import { useGitHubStateForKey } from "../../store/githubStore";
+import { useThinkingPhrase } from "../claude/ClaudeChat";
 import { useActivityStore } from "../../store/activityStore";
 import { useEditorStore } from "../../store/editorStore";
-import { useTerminalStore, useActiveTerminalState } from "../../store/terminalStore";
-import { useClaudeStore, useActiveClaudeState } from "../../store/claudeStore";
+import { useTerminalStore, useTerminalStateForKey } from "../../store/terminalStore";
+import { useClaudeStore, useClaudeStateForKey } from "../../store/claudeStore";
 import { useMcpStore } from "../../store/mcpStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { invoke } from "@tauri-apps/api/core";
@@ -74,21 +75,14 @@ function BorderSpinner({ color }: { color: "blue" | "orange" }) {
   );
 }
 
-/** Maps command IDs to session keys — registered at submit time so event listeners can find the owner */
-export const cmdOwnerMap = new Map<number, string>();
-
-/** Set before invoke("run_command") so listeners can route events that arrive before the ID is known */
-export let pendingCmdProject: string | null = null;
-export function setPendingCmdProject(val: string | null) {
-  pendingCmdProject = val;
-}
-
 interface Props {
   sessionId: string;
   sessionType: "terminal" | "claude" | "github";
   isExpanded: boolean;
   onCollapsedClick: () => void;
   onLabelClick: () => void;
+  onCollapse: () => void;
+  onRemove: () => void;
 }
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -103,40 +97,41 @@ const LABELS: Record<string, { text: string; placeholder: string }> = {
   github: { text: "GitHub", placeholder: "Search PRs and issues..." },
 };
 
-export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick, onLabelClick }: Props) {
+export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick, onLabelClick, onCollapse, onRemove }: Props) {
   const { text, placeholder } = LABELS[sessionType];
   const icon = ICONS[sessionType];
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
 
-  // Terminal store — per-project state via selector (reads from activeKey, correct for expanded pill)
-  const termLastOutputLine = useActiveTerminalState((s) => s.lastOutputLine);
-  const termShowingOutput = useActiveTerminalState((s) => s.showingOutput);
+  /** Ensure store activeKey matches this pill before calling store actions */
+  const syncTerminalKey = () => { useTerminalStore.getState().setActiveKey(sessionId); };
+  const syncClaudeKey = () => { useClaudeStore.getState().setActiveKey(sessionId); };
+
+  // Terminal store — per-session state
+  const termLastOutputLine = useTerminalStateForKey(sessionId, (s) => s.lastOutputLine);
+  const termShowingOutput = useTerminalStateForKey(sessionId, (s) => s.showingOutput);
   const termSetShowingOutput = useTerminalStore((s) => s.setShowingOutput);
-  const termPillCmdId = useActiveTerminalState((s) => s.pillCmdId);
-  const termSetPillCmdId = useTerminalStore((s) => s.setPillCmdId);
+  const termIsSpawned = useTerminalStateForKey(sessionId, (s) => s.isSpawned);
+  const termShellReady = useTerminalStateForKey(sessionId, (s) => s.shellReady);
   const termSetLastCommand = useTerminalStore((s) => s.setLastCommand);
-  const termHistoryIndex = useActiveTerminalState((s) => s.historyIndex);
+  const termHistoryIndex = useTerminalStateForKey(sessionId, (s) => s.historyIndex);
   const termSetHistoryIndex = useTerminalStore((s) => s.setHistoryIndex);
   const termPushHistory = useTerminalStore((s) => s.pushHistory);
 
   // Stash the current input when entering history browsing
   const draftRef = useRef("");
 
-  // Claude store — per-project state via selector
-  const claudeLastOutputLine = useActiveClaudeState((s) => s.lastOutputLine);
-  const claudeShowingOutput = useActiveClaudeState((s) => s.showingOutput);
-  const claudeIsStreaming = useActiveClaudeState((s) => s.isStreaming);
+  // Claude store — per-session state
+  const claudeLastOutputLine = useClaudeStateForKey(sessionId, (s) => s.lastOutputLine);
+  const claudeShowingOutput = useClaudeStateForKey(sessionId, (s) => s.showingOutput);
+  const claudeIsStreaming = useClaudeStateForKey(sessionId, (s) => s.isStreaming);
   const claudeSetShowingOutput = useClaudeStore((s) => s.setShowingOutput);
   const claudeAddUserMessage = useClaudeStore((s) => s.addUserMessage);
 
-  // GitHub store — per-session via selector
-  const githubLastOutputLine = useActiveGitHubState((s) => s.lastOutputLine);
-  const githubShowingOutput = useActiveGitHubState((s) => s.showingOutput);
-
-  // Track stdin mode (activated by double-click while command is running)
-  const [stdinMode, setStdinMode] = useState(false);
+  // GitHub store — per-session state
+  const githubLastOutputLine = useGitHubStateForKey(sessionId, (s) => s.lastOutputLine);
+  const githubShowingOutput = useGitHubStateForKey(sessionId, (s) => s.showingOutput);
 
   // Track Ctrl key for force-kill vs interrupt
   const [ctrlHeld, setCtrlHeld] = useState(false);
@@ -184,10 +179,11 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
           : ""
     : "";
 
+  const thinkingPhrase = useThinkingPhrase();
   const lastOutputLine = isTerminal
     ? termLastOutputLine
     : isClaude
-      ? claudeLastOutputLine
+      ? (claudeLastOutputLine === "Thinking..." ? thinkingPhrase : claudeLastOutputLine)
       : githubLastOutputLine;
   const showingOutput = isTerminal
     ? termShowingOutput
@@ -195,6 +191,16 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       ? claudeShowingOutput
       : githubShowingOutput;
   const hasOutput = showingOutput && lastOutputLine;
+
+  /** Ensure persistent shell is spawned for this terminal session */
+  const ensureTerminalSpawned = async () => {
+    const key = sessionId;
+    const proj = useTerminalStore.getState().projects[key];
+    if (proj?.isSpawned) return;
+    const shell = useSettingsStore.getState().terminal.shell || undefined;
+    await invoke("spawn_terminal", { key, cwd: workspaceRoot || "/", shell });
+    useTerminalStore.getState().setSpawned(key, true);
+  };
 
   const ensureClaudeSpawned = async () => {
     const key = sessionId;
@@ -216,23 +222,36 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     if (isTerminal) {
       if (!workspaceRoot) return;
 
-      // If a command is already running, send input to its stdin
-      const termState = useTerminalStore.getState();
-      const termProj = termState.activeKey ? termState.projects[termState.activeKey] : null;
-      const runningId = termProj?.pillCmdId ?? null;
-      if (runningId !== null) {
-        await invoke("write_command", { id: runningId, data: value + "\n" });
+      // Ensure persistent shell is running, then write command to it
+      await ensureTerminalSpawned();
+
+      // Block input until shell is ready (setup complete, __a defined)
+      const currentProj = useTerminalStore.getState().projects[sessionId];
+      if (!currentProj?.shellReady) return;
+
+      // If a command is already running (between markers), send raw stdin input
+      const termProj = useTerminalStore.getState().projects[sessionId];
+      if (termProj?.capturingCommand) {
+        await invoke("write_terminal", { key: sessionId, data: value + "\n" });
         return;
       }
 
+      syncTerminalKey();
       termPushHistory(value);
       termSetLastCommand(value);
-      pendingCmdProject = sessionId;
-      const shell = useSettingsStore.getState().terminal.shell || undefined;
-      const id = await invoke<number>("run_command", { cmd: value, cwd: workspaceRoot, shell });
-      cmdOwnerMap.set(id, sessionId);
-      termSetPillCmdId(id);
-      setActivityStatus(sessionId, "running");
+
+      // Use the __a helper function (defined at shell spawn) which:
+      // 1. Clears the echoed line and re-prints just the command
+      // 2. Emits OSC 7770 start/end markers around the command output
+      const shellName = (useSettingsStore.getState().terminal.shell || "").toLowerCase();
+      if (shellName.includes("cmd")) {
+        // cmd.exe — no __a function, fall back to plain command
+        await invoke("write_terminal", { key: sessionId, data: value + "\n" });
+      } else {
+        // POSIX shells + PowerShell — use __a helper
+        const escaped = value.replace(/'/g, "'\\''");
+        await invoke("write_terminal", { key: sessionId, data: `__a '${escaped}'\n` });
+      }
     } else if (isClaude) {
       const key = sessionId;
 
@@ -244,6 +263,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       }
 
       await ensureClaudeSpawned();
+      syncClaudeKey();
       claudeAddUserMessage(value);
       setActivityStatus(sessionId, "running");
 
@@ -272,9 +292,9 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     // Arrow Up — navigate history backwards
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      const _ts = useTerminalStore.getState();
-      const history = (_ts.activeKey ? _ts.projects[_ts.activeKey]?.history : null) ?? [];
+      const history = useTerminalStore.getState().projects[sessionId]?.history ?? [];
       if (history.length === 0) return;
+      syncTerminalKey();
       const idx = termHistoryIndex;
       if (idx === -1) {
         draftRef.current = input.value;
@@ -292,8 +312,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     // Arrow Down — navigate history forwards
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      const _ts = useTerminalStore.getState();
-      const history = (_ts.activeKey ? _ts.projects[_ts.activeKey]?.history : null) ?? [];
+      syncTerminalKey();
+      const history = useTerminalStore.getState().projects[sessionId]?.history ?? [];
       const idx = termHistoryIndex;
       if (idx === -1) return;
       if (idx < history.length - 1) {
@@ -341,19 +361,17 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
 
   const handleTerminalStop = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const _ts = useTerminalStore.getState();
-    const cmdId = (_ts.activeKey ? _ts.projects[_ts.activeKey]?.pillCmdId : null) ?? null;
-    if (cmdId === null) return;
+    if (!termIsSpawned) return;
 
     if (ctrlHeld) {
-      await invoke("kill_command", { id: cmdId });
+      // Force kill — destroy the shell entirely
+      await invoke("kill_terminal", { key: sessionId });
+      useTerminalStore.getState().setSpawned(sessionId, false);
     } else {
-      await invoke("write_command", { id: cmdId, data: "\x03" });
+      // Send Ctrl+C to interrupt current command
+      await invoke("write_terminal", { key: sessionId, data: "\x03" });
     }
 
-    termSetShowingOutput(false);
-    termSetPillCmdId(null);
-    setStdinMode(false);
     setActivityStatus(sessionId, "idle");
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -362,6 +380,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     e.stopPropagation();
     const key = sessionId;
     await invoke("interrupt_claude", { key });
+    syncClaudeKey();
     claudeSetShowingOutput(false);
     setActivityStatus(sessionId, "idle");
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -370,23 +389,35 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   const handleNewPrompt = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isTerminal) {
+      syncTerminalKey();
       termSetShowingOutput(false);
       clearActivityUnread(sessionId);
     } else if (isClaude) {
+      syncClaudeKey();
       claudeSetShowingOutput(false);
       clearActivityUnread(sessionId);
     }
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
+  /** Middle-click removes the pill */
+  const handleAuxClick = (e: React.MouseEvent) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      onRemove();
+    }
+  };
+
   if (!isExpanded) {
     return (
       <button
         className={`pill-item pill-item--collapsed${glowClass}`}
+        data-session-id={sessionId}
         onClick={() => {
           clearActivityUnread(sessionId);
           onCollapsedClick();
         }}
+        onAuxClick={handleAuxClick}
         title={`Switch to ${text}`}
         aria-label={`Switch to ${text}`}
       >
@@ -396,14 +427,19 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   }
 
   return (
-    <div className={`pill-item pill-item--expanded${glowClass}`}>
+    <div className={`pill-item pill-item--expanded${glowClass}`} onAuxClick={handleAuxClick}>
       {isExpanded && isSpinning && <BorderSpinner color={spinColor} />}
-      {/* Left zone — label toggles panel */}
+      {/* Left zone — left click toggles panel, right click collapses */}
       <button
         className="pill-item__label-zone"
         onClick={() => {
           clearActivityUnread(sessionId);
           onLabelClick();
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onCollapse();
         }}
         aria-label={`Toggle ${text} panel`}
       >
@@ -414,55 +450,18 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       {/* Divider */}
       <div className="pill-item__divider" />
 
-      {/* Right zone — input, stdin, or output */}
+      {/* Right zone — input or output */}
       <div
         className="pill-item__input-zone"
         onMouseDown={hasOutput ? (e) => { if (e.detail > 1) e.preventDefault(); } : undefined}
         onDoubleClick={hasOutput ? (e) => {
           e.stopPropagation();
-          if (isTerminal && termPillCmdId !== null) {
-            setStdinMode(true);
-            requestAnimationFrame(() => inputRef.current?.focus());
-          } else if (!(isClaude && claudeIsStreaming)) {
+          if (!(isClaude && claudeIsStreaming)) {
             handleNewPrompt(e);
           }
         } : undefined}
       >
-        {isTerminal && termPillCmdId !== null && stdinMode ? (
-          <>
-            <textarea
-              ref={inputRef}
-              className="pill-item__input"
-              placeholder="Send input..."
-              aria-label="Send input to running command"
-              rows={1}
-              onKeyDown={handleKeyDown}
-              onBlur={() => setStdinMode(false)}
-            />
-            <button
-              className={`pill-item__new-prompt ${ctrlHeld ? "pill-item__force-kill" : "pill-item__stop"}`}
-              onClick={handleTerminalStop}
-              title={ctrlHeld ? "Force kill" : "Stop command"}
-              aria-label={ctrlHeld ? "Force kill" : "Stop command"}
-            >
-              {ctrlHeld ? <Skull size={12} /> : <Square size={12} />}
-            </button>
-          </>
-        ) : isTerminal && termPillCmdId !== null ? (
-          <>
-            <span className="pill-item__output">
-              {lastOutputLine}
-            </span>
-            <button
-              className={`pill-item__new-prompt ${ctrlHeld ? "pill-item__force-kill" : "pill-item__stop"}`}
-              onClick={handleTerminalStop}
-              title={ctrlHeld ? "Force kill" : "Stop command"}
-              aria-label={ctrlHeld ? "Force kill" : "Stop command"}
-            >
-              {ctrlHeld ? <Skull size={12} /> : <Square size={12} />}
-            </button>
-          </>
-        ) : hasOutput ? (
+        {hasOutput ? (
           <>
             <span className="pill-item__output">
               {isTerminal ? (
@@ -477,7 +476,16 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
                 lastOutputLine
               )}
             </span>
-            {isClaude && claudeIsStreaming ? (
+            {isTerminal && termIsSpawned && activityStatus === "running" ? (
+              <button
+                className={`pill-item__new-prompt ${ctrlHeld ? "pill-item__force-kill" : "pill-item__stop"}`}
+                onClick={handleTerminalStop}
+                title={ctrlHeld ? "Force kill shell" : "Send Ctrl+C"}
+                aria-label={ctrlHeld ? "Force kill shell" : "Send Ctrl+C"}
+              >
+                {ctrlHeld ? <Skull size={12} /> : <Square size={12} />}
+              </button>
+            ) : isClaude && claudeIsStreaming ? (
               <button
                 className="pill-item__new-prompt pill-item__stop"
                 onClick={handleInterrupt}
@@ -502,7 +510,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
             <textarea
               ref={inputRef}
               className="pill-item__input"
-              placeholder={placeholder}
+              placeholder={isTerminal && !termShellReady ? "Starting shell..." : placeholder}
+              disabled={isTerminal && !termShellReady}
               aria-label={`${text} input`}
               rows={1}
               onKeyDown={handleKeyDown}

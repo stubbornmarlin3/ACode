@@ -8,6 +8,7 @@ import { useActivityStore, getProjectActivity } from "../../store/activityStore"
 import { generateProjectAvatar } from "../../utils/projectAvatar";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import { AddSessionButton } from "../pillbar/PillBar";
+import { NotificationBell } from "../notifications/NotificationCenter";
 
 function getProjectGlowClass(activity: { terminal: string; claude: string } | undefined): string {
   if (!activity) return "";
@@ -281,6 +282,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
           return (
             <button
               key={project.id}
+              data-project-path={project.path}
               className={`projects-rail__icon${isActive ? " projects-rail__icon--active" : ""}${glowClass}${isDragging ? " projects-rail__icon--dragging" : ""}`}
               style={{
                 transform: isDragging
@@ -306,6 +308,8 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
             </button>
           );
         })}
+        <div className="projects-rail__spacer" />
+        <NotificationBell />
       </aside>
       {contextMenu.menu && (
         <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />
