@@ -33,7 +33,6 @@ export function GitHubAuthGate() {
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [autoChecked, setAutoChecked] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const completeAuth = async (user?: string) => {
@@ -47,10 +46,8 @@ export function GitHubAuthGate() {
     }
   };
 
-  // Auto-check for existing stored token on mount
+  // Re-check stored token on mount (supplements the app-level checkAuth)
   useEffect(() => {
-    if (autoChecked) return;
-    setAutoChecked(true);
     invoke<{ authenticated: boolean; user: string }>("github_check_auth").then(
       (status) => {
         if (status.authenticated) completeAuth(status.user);

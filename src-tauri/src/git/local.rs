@@ -87,28 +87,31 @@ pub fn git_init(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let dest_path = Path::new(&dest);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let dest_path = Path::new(&dest);
 
-        let final_path = if dest_path.exists() && dest_path.is_dir() {
-            let repo_name = url
-                .trim_end_matches('/')
-                .trim_end_matches(".git")
-                .rsplit('/')
-                .next()
-                .unwrap_or("repo");
-            dest_path.join(repo_name)
-        } else {
-            dest_path.to_path_buf()
-        };
+            let final_path = if dest_path.exists() && dest_path.is_dir() {
+                let repo_name = url
+                    .trim_end_matches('/')
+                    .trim_end_matches(".git")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("repo");
+                dest_path.join(repo_name)
+            } else {
+                dest_path.to_path_buf()
+            };
 
-        let fo = make_fetch_options();
-        let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(fo);
-        builder
-            .clone(&url, &final_path)
-            .map_err(|e| format!("git clone failed: {}", e))?;
+            let fo = make_fetch_options();
+            let mut builder = git2::build::RepoBuilder::new();
+            builder.fetch_options(fo);
+            builder
+                .clone(&url, &final_path)
+                .map_err(|e| format!("git clone failed: {}", e))?;
 
-        Ok(final_path.to_string_lossy().to_string())
+            Ok(final_path.to_string_lossy().to_string())
+        }))
+        .unwrap_or_else(|_| Err("git clone panicked unexpectedly".to_string()))
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -623,7 +626,7 @@ pub async fn git_fetch(repo_path: String) -> Result<(), String> {
             .find_remote("origin")
             .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
 
-        let mut fo = make_fetch_options_silent();
+        let mut fo = make_fetch_options();
         fo.prune(git2::FetchPrune::On);
         remote
             .fetch(&[] as &[&str], Some(&mut fo), None)
@@ -650,7 +653,7 @@ pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(
         let refspec = format!("refs/heads/{}:refs/heads/{}", branch, branch);
         let mut remote = repo
             .find_remote("origin")
-            .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
+            .map_err(|_| "No remote 'origin' configured. Add a remote first with: git remote add origin <url>".to_string())?;
 
         let mut po = make_push_options();
         remote
@@ -718,7 +721,7 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
                 .map_err(|e| format!("Failed to fast-forward: {}", e))?;
             repo.set_head(&refname)
                 .map_err(|e| format!("Failed to set HEAD: {}", e))?;
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().safe()))
                 .map_err(|e| format!("Failed to checkout: {}", e))?;
             return Ok(());
         }

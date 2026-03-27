@@ -241,11 +241,11 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     [contextMenu, removeProject, activeProjectId, setWorkspaceRoot]
   );
 
-  const handleCloneRepo = useCallback(async () => {
-    setActiveProject(null);
-    setSidebarTab("explorer");
-    await setWorkspaceRoot(null);
-  }, [setActiveProject, setSidebarTab, setWorkspaceRoot]);
+  const setCloneExplorerOpen = useLayoutStore((s) => s.setCloneExplorerOpen);
+
+  const handleCloneRepo = useCallback(() => {
+    setCloneExplorerOpen(true);
+  }, [setCloneExplorerOpen]);
 
   const handleRailContext = useCallback(
     (e: React.MouseEvent) => {

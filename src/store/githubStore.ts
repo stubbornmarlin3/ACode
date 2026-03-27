@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 
-export type GitHubView = "pr-list" | "pr-detail" | "issue-list" | "issue-detail";
+export type GitHubView = "pr-list" | "pr-detail" | "issue-list" | "issue-detail" | "actions-list";
 
 export interface PrSummary {
   number: number;
@@ -61,6 +61,18 @@ export interface IssueDetail {
   created_at: string;
 }
 
+export interface WorkflowRunSummary {
+  id: number;
+  name: string;
+  head_branch: string;
+  status: string;
+  conclusion: string | null;
+  event: string;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+}
+
 /** Per-session GitHub state */
 export interface GitHubSessionState {
   activeView: GitHubView;
@@ -73,7 +85,9 @@ export interface GitHubSessionState {
   prComments: PrComment[];
   issues: IssueSummary[];
   currentIssue: IssueDetail | null;
+  workflowRuns: WorkflowRunSummary[];
   isLoading: boolean;
+  error: string | null;
   lastOutputLine: string;
   showingOutput: boolean;
 }
@@ -89,7 +103,9 @@ const EMPTY_SESSION: GitHubSessionState = {
   prComments: [],
   issues: [],
   currentIssue: null,
+  workflowRuns: [],
   isLoading: false,
+  error: null,
   lastOutputLine: "",
   showingOutput: false,
 };
@@ -132,6 +148,7 @@ interface GitHubStore {
   setLastOutputLine: (line: string) => void;
   setShowingOutput: (showing: boolean) => void;
 
+  checkAuth: () => Promise<void>;
   logout: () => Promise<void>;
   reset: () => void;
 }
@@ -167,6 +184,17 @@ export const useGitHubStore = create<GitHubStore>((set, get) => ({
     const { activeKey, sessions } = get();
     if (!activeKey) return;
     set({ sessions: setSession(sessions, activeKey, { showingOutput: showing }) });
+  },
+
+  checkAuth: async () => {
+    try {
+      const status = await invoke<{ authenticated: boolean; user: string }>("github_check_auth");
+      if (status.authenticated) {
+        set({ isAuthenticated: true, authUser: status.user ?? null });
+      }
+    } catch {
+      // Token not stored or invalid
+    }
   },
 
   logout: async () => {

@@ -57,11 +57,6 @@ function CloneExplorer({ onClose, onCloned }: { onClose: () => void; onCloned: (
   const [error, setError] = useState("");
   const searchTimeoutRef = { current: null as ReturnType<typeof setTimeout> | null };
 
-  // Load initial repos on mount
-  useState(() => {
-    loadRepos(undefined);
-  });
-
   const loadRepos = async (q: string | undefined) => {
     setLoading(true);
     setError("");
@@ -75,6 +70,11 @@ function CloneExplorer({ onClose, onCloned }: { onClose: () => void; onCloned: (
       setLoading(false);
     }
   };
+
+  // Load initial repos on mount
+  useEffect(() => {
+    loadRepos(undefined);
+  }, []);
 
   const handleSearchChange = (val: string) => {
     setQuery(val);
@@ -91,7 +91,7 @@ function CloneExplorer({ onClose, onCloned }: { onClose: () => void; onCloned: (
     setCloning(repo.full_name);
     setError("");
     try {
-      const url = repo.is_private ? repo.ssh_url : repo.clone_url;
+      const url = repo.clone_url;
       const resultPath = await invoke<string>("git_clone", { url, dest });
       onCloned(resultPath);
     } catch (e) {
@@ -156,10 +156,9 @@ function WelcomeScreen() {
   const addProject = useLayoutStore((s) => s.addProject);
   const setActiveProject = useLayoutStore((s) => s.setActiveProject);
   const setWorkspaceRoot = useEditorStore((s) => s.setWorkspaceRoot);
-  const [showClone, setShowClone] = useState(false);
+  const setCloneExplorerOpen = useLayoutStore((s) => s.setCloneExplorerOpen);
 
   const handleOpen = async () => {
-    // Open the dialog at the parent of the last-opened project
     const state = useEditorStore.getState();
     const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
     const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
@@ -173,21 +172,6 @@ function WelcomeScreen() {
     setWorkspaceRoot(selected);
   };
 
-  const handleCloned = (path: string) => {
-    const name = path.split(/[\\/]/).pop() ?? path;
-    addProject({ id: path, name, path });
-    setActiveProject(path);
-    setWorkspaceRoot(path);
-  };
-
-  if (showClone) {
-    return (
-      <div className="welcome-screen" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
-        <CloneExplorer onClose={() => setShowClone(false)} onCloned={handleCloned} />
-      </div>
-    );
-  }
-
   return (
     <div className="welcome-screen" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
       <div className="welcome-screen__buttons">
@@ -195,10 +179,36 @@ function WelcomeScreen() {
           <FolderOpen size={20} />
           Open Folder
         </button>
-        <button className="welcome-screen__btn" onClick={() => setShowClone(true)} onMouseDown={(e) => e.stopPropagation()}>
+        <button className="welcome-screen__btn" onClick={() => setCloneExplorerOpen(true)} onMouseDown={(e) => e.stopPropagation()}>
           <GitFork size={20} />
           Clone Repository
         </button>
+      </div>
+    </div>
+  );
+}
+
+function CloneExplorerOverlay() {
+  const cloneExplorerOpen = useLayoutStore((s) => s.cloneExplorerOpen);
+  const setCloneExplorerOpen = useLayoutStore((s) => s.setCloneExplorerOpen);
+  const addProject = useLayoutStore((s) => s.addProject);
+  const setActiveProject = useLayoutStore((s) => s.setActiveProject);
+  const setWorkspaceRoot = useEditorStore((s) => s.setWorkspaceRoot);
+
+  if (!cloneExplorerOpen) return null;
+
+  const handleCloned = (path: string) => {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    addProject({ id: path, name, path });
+    setActiveProject(path);
+    setWorkspaceRoot(path);
+    setCloneExplorerOpen(false);
+  };
+
+  return (
+    <div className="clone-overlay" onMouseDown={() => setCloneExplorerOpen(false)}>
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        <CloneExplorer onClose={() => setCloneExplorerOpen(false)} onCloned={handleCloned} />
       </div>
     </div>
   );
@@ -229,8 +239,19 @@ export function RootLayout() {
   // Listen for file system changes and refresh the sidebar tree
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listen<{ paths: string[] }>("fs-change", () => {
-      useEditorStore.getState().refreshTree();
+    listen<{ paths: string[] }>("fs-change", async () => {
+      try {
+        await useEditorStore.getState().refreshTree();
+      } catch {
+        // Workspace root was likely deleted — close the project
+        const ws = useEditorStore.getState().workspaceRoot;
+        if (ws) {
+          const layout = useLayoutStore.getState();
+          layout.removeProject(ws);
+          layout.setActiveProject(null);
+          useEditorStore.getState().setWorkspaceRoot(null);
+        }
+      }
     }).then((u) => { unlisten = u; });
     return () => { unlisten?.(); };
   }, []);
@@ -340,6 +361,7 @@ export function RootLayout() {
           <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
         )}
         <BannerToastContainer />
+        <CloneExplorerOverlay />
       </div>
     );
   }
@@ -361,6 +383,7 @@ export function RootLayout() {
       </div>
       <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
       <BannerToastContainer />
+      <CloneExplorerOverlay />
     </div>
   );
 }

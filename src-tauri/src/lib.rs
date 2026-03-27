@@ -1028,6 +1028,7 @@ pub fn run() {
             git::github::github_list_user_repos,
             git::github::github_start_device_flow,
             git::github::github_poll_device_flow,
+            git::github::github_list_workflow_runs,
             git::github::github_logout,
             watch_directory,
             unwatch_directory,

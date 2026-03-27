@@ -647,7 +647,7 @@ pub async fn github_list_user_repos(
                 owner: r["owner"]["login"].as_str().unwrap_or("").to_string(),
                 description: r["description"].as_str().unwrap_or("").to_string(),
                 is_private: r["private"].as_bool().unwrap_or(false),
-                clone_url: r["html_url"].as_str().unwrap_or("").to_string(),
+                clone_url: r["clone_url"].as_str().unwrap_or("").to_string(),
                 ssh_url: r["ssh_url"].as_str().unwrap_or("").to_string(),
                 updated_at: r["updated_at"].as_str().unwrap_or("").to_string(),
             })
@@ -673,7 +673,7 @@ pub async fn github_list_user_repos(
                 owner: r.owner.as_ref().map(|o| o.login.clone()).unwrap_or_default(),
                 description: r.description.clone().unwrap_or_default(),
                 is_private: r.private.unwrap_or(false),
-                clone_url: r.html_url.as_ref().map(|u| u.to_string()).unwrap_or_default(),
+                clone_url: r.clone_url.as_ref().map(|u| u.to_string()).unwrap_or_default(),
                 ssh_url: r.ssh_url.clone().unwrap_or_default(),
                 updated_at: r.updated_at.map(|d| d.to_string()).unwrap_or_default(),
             })
@@ -681,6 +681,72 @@ pub async fn github_list_user_repos(
 
         Ok(repos)
     }
+}
+
+// ── Workflow Runs (GitHub Actions) ────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct WorkflowRunSummary {
+    pub id: u64,
+    pub name: String,
+    pub head_branch: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub event: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub html_url: String,
+}
+
+#[tauri::command]
+pub async fn github_list_workflow_runs(
+    owner: String,
+    repo: String,
+    state: State<'_, std::sync::Arc<GitHubState>>,
+) -> Result<Vec<WorkflowRunSummary>, String> {
+    let _client = ensure_client(&state)?;
+    let token = load_stored_token()?;
+    let http = reqwest::Client::new();
+    let resp = http
+        .get(format!(
+            "https://api.github.com/repos/{}/{}/actions/runs",
+            owner, repo
+        ))
+        .query(&[("per_page", "30")])
+        .header("Authorization", format!("Bearer {}", token))
+        .header("User-Agent", "acode")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to list workflow runs: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let runs = body["workflow_runs"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|r| WorkflowRunSummary {
+            id: r["id"].as_u64().unwrap_or(0),
+            name: r["name"].as_str().unwrap_or("").to_string(),
+            head_branch: r["head_branch"].as_str().unwrap_or("").to_string(),
+            status: r["status"].as_str().unwrap_or("").to_string(),
+            conclusion: r["conclusion"].as_str().map(|s| s.to_string()),
+            event: r["event"].as_str().unwrap_or("").to_string(),
+            created_at: r["created_at"].as_str().unwrap_or("").to_string(),
+            updated_at: r["updated_at"].as_str().unwrap_or("").to_string(),
+            html_url: r["html_url"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
+
+    Ok(runs)
 }
 
 // ── OAuth Device Flow ────────────────────────────────────────────────

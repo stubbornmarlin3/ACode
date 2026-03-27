@@ -42,6 +42,7 @@ interface LayoutStore {
   };
   projects: { projects: Project[]; activeProjectId: string | null };
   settingsOpen: boolean;
+  cloneExplorerOpen: boolean;
 
   setSidebarTab: (tab: SidebarTab) => void;
   toggleSidebar: () => void;
@@ -58,6 +59,7 @@ interface LayoutStore {
   reorderProjects: (fromIndex: number, toIndex: number) => void;
   updateProjectIcon: (id: string, iconUrl: string) => void;
   setSettingsOpen: (open: boolean) => void;
+  setCloneExplorerOpen: (open: boolean) => void;
 }
 
 /**
@@ -99,6 +101,7 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
   pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1 },
   projects: { projects: [], activeProjectId: null },
   settingsOpen: false,
+  cloneExplorerOpen: false,
 
   setSidebarTab: (tab) =>
     set((s) => ({ sidebar: { ...s.sidebar, activeTab: tab } })),
@@ -333,6 +336,7 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
     })),
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setCloneExplorerOpen: (open) => set({ cloneExplorerOpen: open }),
 }));
 
 /** Get the PillMode for the currently active pill */

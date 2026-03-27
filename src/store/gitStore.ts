@@ -124,12 +124,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetch: async (repoPath) => {
-    try {
-      await invoke("git_fetch", { repoPath });
-      await get().refreshStatus(repoPath);
-    } catch {
-      // Fetch can fail silently (no remote, network issues)
-    }
+    await invoke("git_fetch", { repoPath });
+    await get().refreshStatus(repoPath);
   },
 
   push: async (repoPath) => {

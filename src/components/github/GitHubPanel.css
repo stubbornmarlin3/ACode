@@ -182,6 +182,24 @@
   border-bottom-color: var(--accent-blue);
 }
 
+.github-nav__refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 100ms ease;
+}
+
+.github-nav__refresh:hover {
+  color: var(--text-primary);
+}
+
 /* ── PR list ──────────────────────────────────────── */
 
 .github-pr-list {
@@ -397,7 +415,7 @@
 
 .github-merge-controls__menu {
   position: absolute;
-  bottom: 100%;
+  top: 100%;
   right: 0;
   margin-bottom: 4px;
   background: var(--bg-panel);
@@ -514,4 +532,72 @@
   padding: var(--spacing-4);
   color: var(--text-disabled);
   font-size: 12px;
+}
+
+/* ── Error state ─────────────────────────────────── */
+
+.github-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-4);
+  color: var(--accent-red);
+  font-size: 12px;
+  text-align: center;
+}
+
+.github-error__retry {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.github-error__retry:hover {
+  background: var(--bg-elevated);
+}
+
+/* ── Actions list ────────────────────────────────── */
+
+.github-actions-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.github-actions-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+
+.github-actions-item__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-actions-item__branch {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  background: var(--bg-glass-surface);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.github-actions-item__event {
+  font-size: 11px;
+  color: var(--text-disabled);
+  flex-shrink: 0;
 }

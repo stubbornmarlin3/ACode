@@ -114,6 +114,15 @@
   z-index: 100;
 }
 
+.git-branch-selector__section-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-disabled);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 8px 2px;
+}
+
 .git-branch-selector__item {
   display: block;
   width: 100%;
@@ -301,6 +310,27 @@
 .git-commit-box__btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.git-commit-box__behind-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--accent-yellow);
+  background: rgba(var(--accent-yellow-rgb, 255, 196, 0), 0.08);
+  border: 1px solid rgba(var(--accent-yellow-rgb, 255, 196, 0), 0.2);
+  border-radius: 4px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }
 
 /* ── Status list ──────────────────────────────────── */

@@ -1,9 +1,6 @@
 {
   "sessions": [
-    "terminal",
-    "claude",
-    "claude",
-    "claude"
+    "github"
   ],
-  "activeIndex": 3
+  "activeIndex": 0
 }

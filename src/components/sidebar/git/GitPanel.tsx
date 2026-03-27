@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GitFork } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
@@ -13,38 +13,38 @@ export function GitPanel() {
   const initRepo = useGitStore((s) => s.initRepo);
   const fetchBranches = useGitStore((s) => s.fetchBranches);
   const fetchRemoteInfo = useGitStore((s) => s.fetchRemoteInfo);
+  const gitFetch = useGitStore((s) => s.fetch);
   const [initializing, setInitializing] = useState(false);
+  const autoFetchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load branches & remote info when git tab mounts
   useEffect(() => {
     if (!workspaceRoot || !isRepo) return;
     fetchBranches(workspaceRoot);
     fetchRemoteInfo(workspaceRoot);
   }, [workspaceRoot, isRepo, fetchBranches, fetchRemoteInfo]);
 
+  // Background fetch every 20s to keep ahead/behind counts current
+  useEffect(() => {
+    if (!workspaceRoot || !isRepo) return;
+    autoFetchRef.current = setInterval(() => {
+      gitFetch(workspaceRoot).catch(() => {});
+    }, 20_000);
+    return () => { if (autoFetchRef.current) clearInterval(autoFetchRef.current); };
+  }, [workspaceRoot, isRepo, gitFetch]);
+
   if (!workspaceRoot) return null;
 
   if (!isRepo) {
     const handleInit = async () => {
       setInitializing(true);
-      try {
-        await initRepo(workspaceRoot);
-      } finally {
-        setInitializing(false);
-      }
+      try { await initRepo(workspaceRoot); } finally { setInitializing(false); }
     };
 
     return (
       <div className="git-panel">
         <div className="git-panel__init">
-          <p className="git-panel__init-text">
-            No git repository detected in this workspace.
-          </p>
-          <button
-            className="git-panel__init-btn"
-            onClick={handleInit}
-            disabled={initializing}
-          >
+          <p className="git-panel__init-text">No git repository detected in this workspace.</p>
+          <button className="git-panel__init-btn" onClick={handleInit} disabled={initializing}>
             <GitFork size={14} />
             {initializing ? "Initializing..." : "Initialize Repository"}
           </button>
