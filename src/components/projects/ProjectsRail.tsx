@@ -39,7 +39,6 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const reorderProjects = useLayoutStore((s) => s.reorderProjects);
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const setWorkspaceRoot = useEditorStore((s) => s.setWorkspaceRoot);
-  const setSidebarTab = useLayoutStore((s) => s.setSidebarTab);
   const updateProjectIcon = useLayoutStore((s) => s.updateProjectIcon);
   const contextMenu = useContextMenu();
   const sessionActivity = useActivityStore((s) => s.sessions);

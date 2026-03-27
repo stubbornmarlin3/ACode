@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ArrowUp, ArrowDown, ArrowUpDown, RefreshCw, CloudUpload } from "lucide-react";
+import { Check, ArrowUp, ArrowDown, ArrowUpDown, CloudUpload } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
 import { useNotificationStore } from "../../../store/notificationStore";

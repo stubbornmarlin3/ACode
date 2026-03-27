@@ -260,7 +260,6 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
   const setActiveProject = useLayoutStore((s) => s.setActiveProject);
   const projects = useLayoutStore((s) => s.projects.projects);
   const setWorkspaceRoot = useEditorStore((s) => s.setWorkspaceRoot);
-  const setSidebarTab = useLayoutStore((s) => s.setSidebarTab);
   const isRepo = useGitStore((s) => s.isRepo);
 
   useEffect(() => {
