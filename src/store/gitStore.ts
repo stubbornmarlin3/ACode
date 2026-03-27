@@ -53,7 +53,9 @@ interface GitStore {
   commit: (repoPath: string, message: string) => Promise<string>;
   discardChanges: (repoPath: string, paths: string[]) => Promise<void>;
   checkoutBranch: (repoPath: string, branch: string) => Promise<void>;
-  createBranch: (repoPath: string, name: string) => Promise<void>;
+  createBranch: (repoPath: string, name: string, baseRef?: string) => Promise<void>;
+  deleteBranch: (repoPath: string, name: string) => Promise<void>;
+  deleteRemoteBranch: (repoPath: string, name: string) => Promise<void>;
   fetch: (repoPath: string) => Promise<void>;
   push: (repoPath: string) => Promise<void>;
   publishBranch: (repoPath: string) => Promise<void>;
@@ -118,8 +120,18 @@ export const useGitStore = create<GitStore>((set, get) => ({
     await get().fetchBranches(repoPath);
   },
 
-  createBranch: async (repoPath, name) => {
-    await invoke("git_create_branch", { repoPath, name });
+  createBranch: async (repoPath, name, baseRef) => {
+    await invoke("git_create_branch", { repoPath, name, baseRef: baseRef ?? null });
+    await get().fetchBranches(repoPath);
+  },
+
+  deleteBranch: async (repoPath, name) => {
+    await invoke("git_delete_branch", { repoPath, name });
+    await get().fetchBranches(repoPath);
+  },
+
+  deleteRemoteBranch: async (repoPath, name) => {
+    await invoke("git_delete_remote_branch", { repoPath, name });
     await get().fetchBranches(repoPath);
   },
 

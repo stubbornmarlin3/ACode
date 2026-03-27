@@ -109,7 +109,13 @@ pub async fn git_clone(url: String, dest: String) -> Result<String, String> {
                 .clone(&url, &final_path)
                 .map_err(|e| format!("git clone failed: {}", e))?;
 
-            Ok(final_path.to_string_lossy().to_string())
+            // Verify the clone produced a valid repo
+            if !final_path.join(".git").exists() {
+                return Err("Clone completed but .git directory not found".to_string());
+            }
+
+            // Normalize to forward slashes for consistency with the rest of the app
+            Ok(final_path.to_string_lossy().replace('\\', "/"))
         }))
         .unwrap_or_else(|_| Err("git clone panicked unexpectedly".to_string()))
     })
@@ -577,21 +583,76 @@ pub fn git_checkout(repo_path: String, branch: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Create a new branch from HEAD.
+/// Create a new branch. If `base_ref` is given, branch from that ref; otherwise from HEAD.
 #[tauri::command]
-pub fn git_create_branch(repo_path: String, name: String) -> Result<(), String> {
+pub fn git_create_branch(repo_path: String, name: String, base_ref: Option<String>) -> Result<(), String> {
     let repo = Repository::discover(&repo_path)
         .map_err(|e| format!("Failed to open repo: {}", e))?;
 
-    let head = repo.head().map_err(|e| format!("Failed to get HEAD: {}", e))?;
-    let commit = head
-        .peel_to_commit()
-        .map_err(|e| format!("Failed to peel to commit: {}", e))?;
+    let commit = if let Some(ref base) = base_ref {
+        let obj = repo.revparse_single(base)
+            .map_err(|e| format!("Failed to find '{}': {}", base, e))?;
+        obj.peel_to_commit()
+            .map_err(|e| format!("Failed to resolve '{}' to a commit: {}", base, e))?
+    } else {
+        let head = repo.head().map_err(|e| format!("Failed to get HEAD: {}", e))?;
+        head.peel_to_commit()
+            .map_err(|e| format!("Failed to peel to commit: {}", e))?
+    };
 
     repo.branch(&name, &commit, false)
         .map_err(|e| format!("Failed to create branch: {}", e))?;
 
     Ok(())
+}
+
+/// Delete a local branch.
+#[tauri::command]
+pub fn git_delete_branch(repo_path: String, name: String) -> Result<(), String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    let current = repo.head().ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+    if current.as_deref() == Some(&name) {
+        return Err("Cannot delete the currently checked-out branch".to_string());
+    }
+
+    let mut branch = repo.find_branch(&name, git2::BranchType::Local)
+        .map_err(|e| format!("Failed to find branch '{}': {}", name, e))?;
+    branch.delete()
+        .map_err(|e| format!("Failed to delete branch '{}': {}", name, e))?;
+
+    Ok(())
+}
+
+/// Delete a remote branch (pushes a delete refspec to origin).
+#[tauri::command]
+pub async fn git_delete_remote_branch(repo_path: String, name: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let repo = Repository::discover(&repo_path)
+            .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+        // name is like "origin/feature-x" — extract the branch part
+        let branch_name = name.strip_prefix("origin/").unwrap_or(&name);
+        let refspec = format!(":refs/heads/{}", branch_name);
+
+        let mut remote = repo.find_remote("origin")
+            .map_err(|_| "No remote 'origin' configured".to_string())?;
+        let mut po = make_push_options();
+        remote.push(&[&refspec], Some(&mut po))
+            .map_err(|e| format!("Failed to delete remote branch '{}': {}", branch_name, e))?;
+
+        // Prune the local tracking ref
+        let tracking_ref = format!("refs/remotes/origin/{}", branch_name);
+        if let Ok(mut reference) = repo.find_reference(&tracking_ref) {
+            let _ = reference.delete();
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Discard working directory changes for specific files.

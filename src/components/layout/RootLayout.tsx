@@ -22,6 +22,7 @@ import { WindowControls } from "./WindowControls";
 import { TitleBarLogo } from "./TitleBarLogo";
 import { BannerToastContainer } from "../notifications/BannerToast";
 import { useNotificationStore } from "../../store/notificationStore";
+import { CreateBranchDialog } from "../sidebar/git/CreateBranchDialog";
 
 const isMacos = platform() === "macos";
 
@@ -214,6 +215,21 @@ function CloneExplorerOverlay() {
   );
 }
 
+function CreateBranchOverlay() {
+  const createBranchOpen = useLayoutStore((s) => s.createBranchOpen);
+  const setCreateBranchOpen = useLayoutStore((s) => s.setCreateBranchOpen);
+
+  if (!createBranchOpen) return null;
+
+  return (
+    <div className="clone-overlay" onMouseDown={() => setCreateBranchOpen(false)}>
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        <CreateBranchDialog />
+      </div>
+    </div>
+  );
+}
+
 export function RootLayout() {
   const isSidebarOpen = useLayoutStore((s) => s.sidebar.isOpen);
   const activeProjectId = useLayoutStore((s) => s.projects.activeProjectId);
@@ -384,6 +400,7 @@ export function RootLayout() {
       <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />
       <BannerToastContainer />
       <CloneExplorerOverlay />
+      <CreateBranchOverlay />
     </div>
   );
 }

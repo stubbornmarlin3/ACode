@@ -124,7 +124,8 @@
 }
 
 .git-branch-selector__item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   padding: 5px 8px;
   font-size: 12px;
@@ -143,6 +144,121 @@
 
 .git-branch-selector__item--active {
   color: var(--accent-blue);
+}
+
+.git-branch-selector__item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-branch-selector__item-delete {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-disabled);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.git-branch-selector__item:hover .git-branch-selector__item-delete {
+  display: flex;
+}
+
+.git-branch-selector__item-delete:hover {
+  color: var(--accent-red);
+  background: rgba(255, 80, 80, 0.1);
+}
+
+/* ── Branch delete confirmation ──────────────────── */
+
+.git-branch-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.git-branch-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  padding: 16px;
+  width: 320px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: 10px;
+}
+
+.git-branch-confirm__message {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.git-branch-confirm__warning {
+  font-size: 12px;
+  color: var(--accent-yellow);
+  margin: 0;
+}
+
+.git-branch-confirm__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.git-branch-confirm__checkbox input {
+  accent-color: var(--accent-blue);
+}
+
+.git-branch-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+}
+
+.git-branch-confirm__btn-cancel {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.git-branch-confirm__btn-cancel:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+.git-branch-confirm__btn-delete {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--accent-red);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 100ms ease;
+}
+
+.git-branch-confirm__btn-delete:hover {
+  opacity: 0.85;
 }
 
 .git-branch-selector__create {
@@ -423,4 +539,196 @@
 .git-file-item__action:hover {
   background: var(--bg-glass-surface);
   color: var(--text-primary);
+}
+
+/* ── Create branch dialog ────────────────────────── */
+
+.create-branch-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-glass);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.create-branch-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.create-branch-dialog__title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.create-branch-dialog__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.create-branch-dialog__close:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.create-branch-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  padding: 12px;
+}
+
+.create-branch-dialog__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.create-branch-dialog__input {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  outline: none;
+  font-family: var(--font-mono);
+}
+
+.create-branch-dialog__input:focus {
+  border-color: var(--accent-blue);
+}
+
+.create-branch-dialog__select-wrap {
+  position: relative;
+}
+
+.create-branch-dialog__select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-glass-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.create-branch-dialog__select:hover {
+  border-color: var(--border-active);
+}
+
+.create-branch-dialog__dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-menu);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: 6px;
+  z-index: 110;
+}
+
+.create-branch-dialog__dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-branch-dialog__dropdown-item:hover {
+  background: var(--bg-glass-surface);
+  color: var(--text-primary);
+}
+
+.create-branch-dialog__dropdown-item--active {
+  color: var(--accent-blue);
+}
+
+.create-branch-dialog__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding-top: var(--spacing-1);
+}
+
+.create-branch-dialog__checkbox input {
+  accent-color: var(--accent-blue);
+}
+
+.create-branch-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-2);
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.create-branch-dialog__btn-cancel {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.create-branch-dialog__btn-cancel:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+.create-branch-dialog__btn-create {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--accent-blue);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 100ms ease;
+}
+
+.create-branch-dialog__btn-create:hover {
+  opacity: 0.85;
+}
+
+.create-branch-dialog__btn-create:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

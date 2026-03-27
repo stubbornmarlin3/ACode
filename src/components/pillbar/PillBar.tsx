@@ -328,11 +328,9 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
     setWorkspaceRoot(selected);
   };
 
-  const handleCloneRepo = async () => {
+  const handleCloneRepo = () => {
     setOpen(false);
-    setActiveProject(null);
-    setSidebarTab("explorer");
-    await setWorkspaceRoot(null);
+    useLayoutStore.getState().setCloneExplorerOpen(true);
   };
 
   return (

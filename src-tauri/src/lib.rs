@@ -1007,6 +1007,8 @@ pub fn run() {
             git::local::git_branches,
             git::local::git_checkout,
             git::local::git_create_branch,
+            git::local::git_delete_branch,
+            git::local::git_delete_remote_branch,
             git::local::git_discard,
             git::local::git_push,
             git::local::git_pull,
