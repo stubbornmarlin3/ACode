@@ -689,6 +689,9 @@ fn spawn_claude(
     key: String,
     cwd: String,
     mcp_config_path: Option<String>,
+    session_id: Option<String>,
+    model: Option<String>,
+    permission_mode: Option<String>,
     state: State<'_, Arc<ClaudeState>>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -703,8 +706,22 @@ fn spawn_claude(
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
-            "--permission-mode", "bypassPermissions",
         ]);
+
+    // Only bypass permissions in "auto" mode — "smart" and "interactive" let the app handle approvals
+    if permission_mode.as_deref() == Some("auto") || permission_mode.is_none() {
+        cmd.args(["--permission-mode", "bypassPermissions"]);
+    }
+
+    // Resume a previous conversation if session ID provided
+    if let Some(ref sid) = session_id {
+        cmd.args(["--session-id", sid]);
+    }
+
+    // Override model if specified
+    if let Some(ref m) = model {
+        cmd.args(["--model", m]);
+    }
 
     // Append MCP config file path if provided
     if let Some(ref config_path) = mcp_config_path {

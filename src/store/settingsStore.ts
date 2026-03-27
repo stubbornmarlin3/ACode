@@ -77,6 +77,13 @@ export interface SidebarSettings {
   tabOrderPerProject: boolean;
 }
 
+export interface ClaudeSettings {
+  /** "auto" = bypassPermissions (Claude auto-approves everything, including questions).
+   *  "smart" = auto-approve tool use (edits, bash) but pause for questions and plan approval.
+   *  "interactive" = pause for all tool use, questions, and plan approval. */
+  permissionMode: "auto" | "smart" | "interactive";
+}
+
 /** Full settings data — every field has a value */
 export interface SettingsData {
   keybinds: Keybind[];
@@ -85,6 +92,7 @@ export interface SettingsData {
   appearance: AppearanceSettings;
   pills: PillsSettings;
   sidebar: SidebarSettings;
+  claude: ClaudeSettings;
 }
 
 /** Sparse overrides — only fields the user has explicitly set */
@@ -95,6 +103,7 @@ export type SettingsOverrides = {
   appearance?: Partial<AppearanceSettings>;
   pills?: Partial<PillsSettings>;
   sidebar?: Partial<SidebarSettings>;
+  claude?: Partial<ClaudeSettings>;
 };
 
 const DEFAULT_EDITOR: EditorSettings = {
@@ -133,6 +142,10 @@ const DEFAULT_SIDEBAR: SidebarSettings = {
   tabOrderPerProject: false,
 };
 
+const DEFAULT_CLAUDE: ClaudeSettings = {
+  permissionMode: "smart",
+};
+
 export const DEFAULTS: SettingsData = {
   keybinds: DEFAULT_KEYBINDS,
   editor: DEFAULT_EDITOR,
@@ -140,6 +153,7 @@ export const DEFAULTS: SettingsData = {
   appearance: DEFAULT_APPEARANCE,
   pills: DEFAULT_PILLS,
   sidebar: DEFAULT_SIDEBAR,
+  claude: DEFAULT_CLAUDE,
 };
 
 /* ── Merge helpers ── */
@@ -152,6 +166,7 @@ function mergeSettings(base: SettingsData, overrides: SettingsOverrides): Settin
     appearance: { ...base.appearance, ...overrides.appearance },
     pills: { ...base.pills, ...overrides.pills },
     sidebar: { ...base.sidebar, ...overrides.sidebar },
+    claude: { ...base.claude, ...overrides.claude },
   };
 }
 
@@ -203,6 +218,7 @@ interface SettingsStore {
   appearance: AppearanceSettings;
   pills: PillsSettings;
   sidebar: SidebarSettings;
+  claude: ClaudeSettings;
 
   /** Load global settings from disk */
   loadGlobal: () => Promise<void>;
@@ -223,6 +239,7 @@ interface SettingsStore {
   setAppearanceSetting: <K extends keyof AppearanceSettings>(key: K, value: AppearanceSettings[K]) => void;
   setPillsSetting: <K extends keyof PillsSettings>(key: K, value: PillsSettings[K]) => void;
   setSidebarSetting: <K extends keyof SidebarSettings>(key: K, value: SidebarSettings[K]) => void;
+  setClaudeSetting: <K extends keyof ClaudeSettings>(key: K, value: ClaudeSettings[K]) => void;
 
   /** Set a value at the project override level */
   setProjectEditorSetting: <K extends keyof EditorSettings>(key: K, value: EditorSettings[K]) => void;
@@ -230,6 +247,7 @@ interface SettingsStore {
   setProjectAppearanceSetting: <K extends keyof AppearanceSettings>(key: K, value: AppearanceSettings[K]) => void;
   setProjectPillsSetting: <K extends keyof PillsSettings>(key: K, value: PillsSettings[K]) => void;
   setProjectSidebarSetting: <K extends keyof SidebarSettings>(key: K, value: SidebarSettings[K]) => void;
+  setProjectClaudeSetting: <K extends keyof ClaudeSettings>(key: K, value: ClaudeSettings[K]) => void;
 
   /** Remove a project override (revert to global) */
   clearProjectOverride: (category: keyof SettingsOverrides, key?: string) => void;
@@ -275,6 +293,7 @@ function recompute(global: SettingsData, overrides: SettingsOverrides) {
     appearance: effective.appearance,
     pills: effective.pills,
     sidebar: effective.sidebar,
+    claude: effective.claude,
   };
 }
 
@@ -396,6 +415,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
     scheduleSaveGlobal(newGlobal);
   },
 
+  setClaudeSetting: (key, value) => {
+    const { _global, _projectOverrides } = get();
+    const newGlobal = { ..._global, claude: { ..._global.claude, [key]: value } };
+    set({ _global: newGlobal, ...recompute(newGlobal, _projectOverrides) });
+    scheduleSaveGlobal(newGlobal);
+  },
+
   /* ── Project override setters ── */
 
   setProjectEditorSetting: (key, value) => {
@@ -443,6 +469,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
     const newOverrides = {
       ..._projectOverrides,
       pills: { ..._projectOverrides.pills, [key]: value },
+    };
+    set({ _projectOverrides: newOverrides, ...recompute(_global, newOverrides) });
+    if (_projectPath) scheduleSaveProject(_projectPath, newOverrides);
+  },
+
+  setProjectClaudeSetting: (key, value) => {
+    const { _global, _projectOverrides, _projectPath } = get();
+    const newOverrides = {
+      ..._projectOverrides,
+      claude: { ..._projectOverrides.claude, [key]: value },
     };
     set({ _projectOverrides: newOverrides, ...recompute(_global, newOverrides) });
     if (_projectPath) scheduleSaveProject(_projectPath, newOverrides);

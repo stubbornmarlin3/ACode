@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useActivityStore } from "./activityStore";
 import { useLayoutStore } from "./layoutStore";
+import { useSettingsStore } from "./settingsStore";
 
 export interface ToolUseEntry {
   id: string;
@@ -35,6 +36,53 @@ export interface ActiveToolUse {
   input: Record<string, unknown>;
 }
 
+/** A single question within an AskUserQuestion tool call */
+export interface AskQuestion {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description: string }>;
+  multiSelect?: boolean;
+}
+
+/** A tool_use that is waiting for user interaction (or was auto-resolved in bypass mode) */
+export interface PendingInteraction {
+  toolUseId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  /** For AskUserQuestion: structured questions array */
+  questions?: AskQuestion[];
+  /** For ExitPlanMode: the plan markdown */
+  plan?: string;
+  /** Tool category for UI rendering */
+  category: "question" | "plan-exit" | "plan-enter" | "edit" | "bash" | "generic";
+  timestamp: number;
+  /** If auto-resolved (bypass mode), the answer the CLI sent. Null = still waiting for user. */
+  autoAnswer?: string;
+}
+
+/** Known interactive tool names from Claude CLI */
+const QUESTION_TOOLS = new Set([
+  "AskUserQuestion", "ask_user_question", "ask_human",
+  "AskFollowupQuestion", "ask_followup_question",
+]);
+
+const PLAN_EXIT_TOOLS = new Set([
+  "ExitPlanMode", "exit_plan_mode",
+]);
+
+const PLAN_ENTER_TOOLS = new Set([
+  "EnterPlanMode", "enter_plan_mode",
+]);
+
+const EDIT_TOOLS = new Set([
+  "Edit", "EditFile", "edit_file", "Write", "WriteFile", "write_file",
+  "MultiEdit", "multi_edit",
+]);
+
+const BASH_TOOLS = new Set([
+  "Bash", "bash", "Execute", "execute", "RunCommand", "run_command",
+]);
+
 /** State for a single project's Claude session */
 export interface ClaudeProjectState {
   messages: ChatMessage[];
@@ -48,6 +96,12 @@ export interface ClaudeProjectState {
   streamingText: string;
   streamingThinking: string;
   activeToolUse: ActiveToolUse | null;
+  /** Selected model override (null = default) */
+  selectedModel: string | null;
+  /** Last known session ID for resuming conversations */
+  lastSessionId: string | null;
+  /** Tool uses awaiting user interaction (only in interactive permission mode) */
+  pendingInteractions: PendingInteraction[];
 }
 
 const EMPTY_PROJECT: ClaudeProjectState = {
@@ -62,6 +116,9 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   streamingText: "",
   streamingThinking: "",
   activeToolUse: null,
+  selectedModel: null,
+  lastSessionId: null,
+  pendingInteractions: [],
 };
 
 interface ClaudeStore {
@@ -76,6 +133,12 @@ interface ClaudeStore {
   setShowingOutput: (showing: boolean) => void;
   setProjectSpawned: (key: string, spawned: boolean) => void;
   clearConversation: (key: string) => void;
+  /** Set the model for the active project (takes effect on next spawn/reconnect) */
+  setModel: (model: string | null) => void;
+  /** Interrupt the current generation — stops streaming, preserves conversation */
+  interruptClaude: (key: string) => Promise<void>;
+  /** Respond to a pending interactive tool use (sends tool_result to Claude via stdin) */
+  resolveInteraction: (key: string, toolUseId: string, result: string) => Promise<void>;
   /** Kill and respawn Claude for the active project, picking up new MCP config */
   reconnect: () => Promise<void>;
 }
@@ -158,6 +221,11 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     let streamingText = proj.streamingText;
     let streamingThinking = proj.streamingThinking;
     let activeToolUse = proj.activeToolUse;
+    let lastSessionId = proj.lastSessionId;
+    let pendingInteractions = [...proj.pendingInteractions];
+    const permissionMode = useSettingsStore.getState().claude.permissionMode;
+    const isSmart = permissionMode === "smart";
+    const isInteractive = permissionMode === "interactive";
 
     for (const event of parsed) {
       const ev = event as Record<string, unknown>;
@@ -170,6 +238,8 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
           contextWindow: sessionInfo?.contextWindow || 0,
           tokensUsed: sessionInfo?.tokensUsed || 0,
         };
+        // Persist session ID for resume after interrupt/reconnect
+        lastSessionId = ev.session_id as string;
       }
 
       if (ev.type === "content_block_start") {
@@ -239,6 +309,87 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
           }
         }
 
+        // Detect tool uses that need user interaction.
+        // In "smart" mode: auto-approve non-interactive tools, pause for questions/plan.
+        // In "interactive" mode: pause for everything.
+        // In "auto" mode: bypassPermissions handles it; still detect questions for read-only display.
+        if (toolUses.length > 0) {
+          for (const tu of toolUses) {
+            const nameLower = tu.name.toLowerCase();
+            const isQuestionTool = QUESTION_TOOLS.has(tu.name) ||
+              nameLower.includes("askuser") || nameLower.includes("ask_user") ||
+              nameLower.includes("askfollowup") || nameLower.includes("ask_followup") ||
+              nameLower.includes("askhuman") || nameLower.includes("ask_human");
+            const isPlanExit = PLAN_EXIT_TOOLS.has(tu.name) ||
+              nameLower.includes("exitplan") || nameLower.includes("exit_plan");
+            const isPlanEnter = PLAN_ENTER_TOOLS.has(tu.name) ||
+              nameLower.includes("enterplan") || nameLower.includes("enter_plan");
+            const isAlwaysInteractive = isQuestionTool || isPlanExit || isPlanEnter;
+
+            // In "smart" mode: auto-approve non-interactive tools immediately via stdin
+            if (isSmart && !isAlwaysInteractive) {
+              invoke("write_claude", {
+                key,
+                data: JSON.stringify({ type: "tool_result", tool_use_id: tu.id, result: "approved" }),
+              }).catch(() => {});
+              continue;
+            }
+
+            // In "auto" mode (bypassPermissions): still detect questions/plan for read-only display
+            // but skip non-interactive tools entirely
+            if (!isAlwaysInteractive && !isInteractive) continue;
+
+            let category: PendingInteraction["category"] = "generic";
+            let questions: AskQuestion[] | undefined;
+            let plan: string | undefined;
+
+            if (isQuestionTool) {
+              category = "question";
+              // AskUserQuestion: input.questions is an array of {question, header, options, multiSelect}
+              const rawQuestions = tu.input.questions as unknown;
+              if (Array.isArray(rawQuestions)) {
+                questions = rawQuestions.map((q: Record<string, unknown>) => ({
+                  question: (q.question as string) || "",
+                  header: (q.header as string) || "",
+                  options: Array.isArray(q.options)
+                    ? (q.options as Array<Record<string, unknown>>).map((o) => ({
+                        label: (o.label as string) || String(o),
+                        description: (o.description as string) || "",
+                      }))
+                    : [],
+                  multiSelect: q.multiSelect as boolean | undefined,
+                }));
+              } else if (typeof tu.input.question === "string") {
+                // Fallback for simpler tools like AskFollowupQuestion
+                questions = [{
+                  question: tu.input.question as string,
+                  header: "",
+                  options: [],
+                }];
+              }
+            } else if (isPlanExit) {
+              category = "plan-exit";
+              plan = tu.input.plan as string | undefined;
+            } else if (isPlanEnter) {
+              category = "plan-enter";
+            } else if (EDIT_TOOLS.has(tu.name)) {
+              category = "edit";
+            } else if (BASH_TOOLS.has(tu.name)) {
+              category = "bash";
+            }
+
+            pendingInteractions.push({
+              toolUseId: tu.id,
+              toolName: tu.name,
+              input: tu.input,
+              questions,
+              plan,
+              category,
+              timestamp: Date.now(),
+            });
+          }
+        }
+
         streamingText = "";
         streamingThinking = "";
       }
@@ -271,6 +422,20 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
             ];
           }
           activeToolUse = null;
+
+          // Handle resolved pending interactions
+          const resultMap = new Map(toolResults.map((r) => [r.toolUseId, r.content]));
+          pendingInteractions = pendingInteractions
+            .map((p) => {
+              if (!resultMap.has(p.toolUseId)) return p;
+              // Question/plan tools: mark as auto-resolved (keep visible with answer)
+              if (p.category === "question" || p.category === "plan-exit" || p.category === "plan-enter") {
+                return { ...p, autoAnswer: resultMap.get(p.toolUseId) || "auto" };
+              }
+              // Edit/bash/generic: remove completely
+              return null;
+            })
+            .filter((p): p is PendingInteraction => p !== null);
         }
       }
 
@@ -314,6 +479,8 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         streamingText,
         streamingThinking,
         activeToolUse,
+        lastSessionId,
+        pendingInteractions,
       }),
     });
   },
@@ -334,10 +501,63 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     set({ projects: setProj(projects, key, { ...EMPTY_PROJECT }) });
   },
 
+  setModel: (model) => {
+    const { activeKey, projects } = get();
+    if (!activeKey) return;
+    set({ projects: setProj(projects, activeKey, { selectedModel: model }) });
+  },
+
+  interruptClaude: async (key) => {
+    const { projects } = get();
+    const proj = projects[key];
+    if (!proj?.isSpawned) return;
+
+    // Kill the process (on Windows there's no clean SIGINT)
+    await invoke("interrupt_claude", { key });
+
+    // Preserve messages and session ID, just stop streaming state
+    set({
+      projects: setProj(get().projects, key, {
+        isStreaming: false,
+        rawBuffer: "",
+        streamingText: "",
+        streamingThinking: "",
+        activeToolUse: null,
+        pendingInteractions: [],
+      }),
+    });
+  },
+
+  resolveInteraction: async (key, toolUseId, result) => {
+    // Send tool_result to Claude via stdin
+    const msg = JSON.stringify({
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      result,
+    });
+    await invoke("write_claude", { key, data: msg });
+
+    // Optimistically remove from pending
+    const { projects } = get();
+    const proj = projects[key];
+    if (proj) {
+      set({
+        projects: setProj(projects, key, {
+          pendingInteractions: proj.pendingInteractions.filter(
+            (p) => p.toolUseId !== toolUseId,
+          ),
+        }),
+      });
+    }
+  },
+
   reconnect: async () => {
     const { activeKey, projects } = get();
     if (!activeKey) return;
     const proj = projects[activeKey];
+
+    // Save session ID for resume
+    const resumeSessionId = proj?.lastSessionId || proj?.sessionInfo?.sessionId || null;
 
     // Kill existing process
     if (proj?.isSpawned) {
@@ -359,12 +579,20 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     }
 
     // Respawn with fresh MCP config
-    // Import dynamically to avoid circular deps
     const { useMcpStore } = await import("./mcpStore");
     const mcpConfigPath = await useMcpStore.getState().writeClaudeConfigFile();
+    const model = get().projects[activeKey]?.selectedModel || undefined;
 
-    // Determine cwd from the key (which is the workspace path)
-    await invoke("spawn_claude", { key: activeKey, cwd: activeKey, mcpConfigPath });
+    // Resume previous session if we have one
+    const permissionMode = useSettingsStore.getState().claude.permissionMode;
+    await invoke("spawn_claude", {
+      key: activeKey,
+      cwd: activeKey,
+      mcpConfigPath,
+      sessionId: resumeSessionId,
+      model,
+      permissionMode,
+    });
     set({
       projects: setProj(get().projects, activeKey, {
         isSpawned: true,

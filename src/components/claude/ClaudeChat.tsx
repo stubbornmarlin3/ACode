@@ -3,14 +3,90 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
 import {
+  useClaudeStore,
   useClaudeStateForKey,
   ChatMessage,
   ToolUseEntry,
   ToolResultEntry,
+  PendingInteraction,
+  AskQuestion,
 } from "../../store/claudeStore";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { McpStatusPanel } from "./McpStatusPanel";
 import "./ClaudeChat.css";
+
+// ── Common Claude models ─────────────────────────────────────────────
+
+const CLAUDE_MODELS = [
+  { id: "claude-sonnet-4-5-20250514", label: "Sonnet 4.5" },
+  { id: "claude-opus-4-0-20250514", label: "Opus 4" },
+  { id: "claude-haiku-3-5-20241022", label: "Haiku 3.5" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "claude-opus-4-6", label: "Opus 4.6" },
+];
+
+function ModelSelector({ currentModel }: { currentModel: string }) {
+  const [open, setOpen] = useState(false);
+  const setModel = useClaudeStore((s) => s.setModel);
+  const reconnect = useClaudeStore((s) => s.reconnect);
+  const selectedModel = useClaudeStateForKey(null, (s) => s.selectedModel);
+  const isStreaming = useClaudeStateForKey(null, (s) => s.isStreaming);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleSelect = async (modelId: string | null) => {
+    setOpen(false);
+    setModel(modelId);
+    if (!isStreaming) {
+      await reconnect();
+    }
+  };
+
+  const displayName = selectedModel
+    ? (CLAUDE_MODELS.find((m) => m.id === selectedModel)?.label ?? selectedModel)
+    : currentModel;
+
+  return (
+    <div className="claude-chat__model-selector" ref={dropdownRef}>
+      <button
+        className="claude-chat__model-btn"
+        onClick={() => setOpen(!open)}
+        title="Change model"
+      >
+        {displayName}
+      </button>
+      {open && (
+        <div className="claude-chat__model-dropdown">
+          <button
+            className={`claude-chat__model-option${!selectedModel ? " claude-chat__model-option--active" : ""}`}
+            onClick={() => handleSelect(null)}
+          >
+            Default ({currentModel})
+          </button>
+          {CLAUDE_MODELS.map((m) => (
+            <button
+              key={m.id}
+              className={`claude-chat__model-option${selectedModel === m.id ? " claude-chat__model-option--active" : ""}`}
+              onClick={() => handleSelect(m.id)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Copy button ─────────────────────────────────────────────────────
 
@@ -400,7 +476,300 @@ function MessageBlock({
   );
 }
 
+// ── Interactive permission cards ─────────────────────────────────────
+
+/** Single question within an AskUserQuestion card */
+function QuestionBlock({
+  q,
+  onAnswer,
+}: {
+  q: AskQuestion;
+  onAnswer: (answer: string) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [customInput, setCustomInput] = useState("");
+
+  const handleOption = (label: string) => {
+    if (q.multiSelect) {
+      const next = new Set(selected);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      setSelected(next);
+    } else {
+      onAnswer(label);
+    }
+  };
+
+  const submitMulti = () => {
+    if (selected.size > 0) onAnswer(Array.from(selected).join(", "));
+  };
+
+  return (
+    <div className="claude-chat__question-block">
+      {q.header && <span className="claude-chat__question-header">{q.header}</span>}
+      <p className="claude-chat__interaction-question">{q.question}</p>
+      {q.options.length > 0 && (
+        <div className="claude-chat__interaction-options">
+          {q.options.map((opt) => (
+            <button
+              key={opt.label}
+              className={`claude-chat__interaction-option${
+                q.multiSelect && selected.has(opt.label) ? " claude-chat__interaction-option--selected" : ""
+              }`}
+              onClick={() => handleOption(opt.label)}
+              title={opt.description}
+            >
+              <span className="claude-chat__option-label">{opt.label}</span>
+              {opt.description && (
+                <span className="claude-chat__option-desc">{opt.description}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {q.multiSelect && selected.size > 0 && (
+        <button className="claude-chat__interaction-approve" onClick={submitMulti}>
+          Confirm ({selected.size} selected)
+        </button>
+      )}
+      <div className="claude-chat__interaction-custom">
+        <input
+          type="text"
+          className="claude-chat__interaction-input"
+          placeholder="Or type a custom response..."
+          value={customInput}
+          onChange={(e) => setCustomInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && customInput.trim()) onAnswer(customInput.trim());
+          }}
+        />
+        <button
+          className="claude-chat__interaction-send"
+          onClick={() => { if (customInput.trim()) onAnswer(customInput.trim()); }}
+          disabled={!customInput.trim()}
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function InteractionCard({
+  interaction,
+  sessionKey,
+}: {
+  interaction: PendingInteraction;
+  sessionKey: string;
+}) {
+  const resolveInteraction = useClaudeStore((s) => s.resolveInteraction);
+  const isResolved = interaction.autoAnswer != null;
+
+  const handle = (value: string) => {
+    if (isResolved) return; // Already answered
+    resolveInteraction(sessionKey, interaction.toolUseId, value);
+  };
+
+  // ── Auto-resolved: show what was asked + auto-answer ──
+  if (isResolved) {
+    const questionText = interaction.questions?.[0]?.question
+      || interaction.plan
+      || (interaction.category === "plan-enter" ? "Enter plan mode?" : interaction.toolName);
+
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--resolved">
+        <div className="claude-chat__interaction-header">
+          <span className="claude-chat__interaction-tool">
+            {interaction.category === "question" ? "Question" : interaction.category === "plan-exit" ? "Plan" : interaction.toolName}
+          </span>
+          <span className="claude-chat__interaction-auto-badge">auto-answered</span>
+        </div>
+        <p className="claude-chat__interaction-question claude-chat__interaction-question--dim">
+          {questionText}
+        </p>
+        {interaction.questions?.[0]?.options && interaction.questions[0].options.length > 0 && (
+          <div className="claude-chat__interaction-options claude-chat__interaction-options--dim">
+            {interaction.questions[0].options.map((opt) => (
+              <span
+                key={opt.label}
+                className={`claude-chat__interaction-option claude-chat__interaction-option--readonly${
+                  interaction.autoAnswer === opt.label ? " claude-chat__interaction-option--chosen" : ""
+                }`}
+              >
+                {opt.label}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="claude-chat__interaction-answer">
+          Answered: {interaction.autoAnswer}
+        </p>
+      </div>
+    );
+  }
+
+  // ── AskUserQuestion — structured multi-question card ──
+  if (interaction.category === "question" && interaction.questions) {
+    // Build response as JSON: { answers: { "question text": "selected label" } }
+    const handleAnswer = (questionText: string, answer: string) => {
+      // For single-question tools, send just the answer text
+      if (interaction.questions!.length === 1) {
+        handle(answer);
+      } else {
+        // For multi-question, send as JSON mapping
+        handle(JSON.stringify({ [questionText]: answer }));
+      }
+    };
+
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--question">
+        {interaction.questions.map((q, i) => (
+          <QuestionBlock
+            key={i}
+            q={q}
+            onAnswer={(answer) => handleAnswer(q.question, answer)}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // ── ExitPlanMode — show the plan + implement / continue planning ──
+  if (interaction.category === "plan-exit") {
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--plan">
+        <div className="claude-chat__interaction-header">
+          <span className="claude-chat__interaction-tool">Plan Ready</span>
+        </div>
+        {interaction.plan && (
+          <div className="claude-chat__plan-content">
+            <Markdown>{interaction.plan}</Markdown>
+          </div>
+        )}
+        <div className="claude-chat__interaction-actions">
+          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+            Implement Plan
+          </button>
+          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+            Continue Planning
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── EnterPlanMode — confirm entering plan mode ──
+  if (interaction.category === "plan-enter") {
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--plan">
+        <div className="claude-chat__interaction-header">
+          <span className="claude-chat__interaction-tool">Enter Plan Mode</span>
+        </div>
+        <p className="claude-chat__interaction-question">
+          Claude wants to switch to plan mode to design an approach before implementing.
+        </p>
+        <div className="claude-chat__interaction-actions">
+          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+            Enter Plan Mode
+          </button>
+          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+            Skip Planning
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── File edit/write — show file path + diff + approve/deny ──
+  if (interaction.category === "edit") {
+    const filePath = interaction.input.file_path as string | undefined;
+    const oldStr = interaction.input.old_string as string | undefined;
+    const newStr = interaction.input.new_string as string | undefined;
+    const content = interaction.input.content as string | undefined;
+
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--edit">
+        <div className="claude-chat__interaction-header">
+          <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
+          {filePath && <span className="claude-chat__interaction-file">{filePath}</span>}
+        </div>
+        {oldStr && newStr && (
+          <DiffBlock oldStr={oldStr} newStr={newStr} filePath={filePath} />
+        )}
+        {content && !oldStr && (
+          <div className="claude-chat__code-block">
+            <pre><code>{content.length > 500 ? content.slice(0, 500) + "\n..." : content}</code></pre>
+          </div>
+        )}
+        <div className="claude-chat__interaction-actions">
+          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+            Approve
+          </button>
+          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+            Deny
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Bash/command — show command + approve/deny ──
+  if (interaction.category === "bash") {
+    const command = interaction.input.command as string | undefined;
+    return (
+      <div className="claude-chat__interaction claude-chat__interaction--bash">
+        <div className="claude-chat__interaction-header">
+          <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
+        </div>
+        {command && (
+          <pre className="claude-chat__interaction-command">{command}</pre>
+        )}
+        <div className="claude-chat__interaction-actions">
+          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+            Approve
+          </button>
+          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+            Deny
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Generic tool — show tool name + input summary + approve/deny ──
+  const summary = Object.entries(interaction.input)
+    .map(([k, v]) => {
+      const val = typeof v === "string" ? v : JSON.stringify(v);
+      return `${k}: ${val.length > 60 ? val.slice(0, 60) + "..." : val}`;
+    })
+    .join("\n");
+
+  return (
+    <div className="claude-chat__interaction claude-chat__interaction--generic">
+      <div className="claude-chat__interaction-header">
+        <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
+      </div>
+      {summary && <pre className="claude-chat__interaction-summary">{summary}</pre>}
+      <div className="claude-chat__interaction-actions">
+        <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+          Approve
+        </button>
+        <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+          Deny
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main chat component ─────────────────────────────────────────────
+
+/** Format token counts: <1k → raw, 1k–999k → "Xk", ≥1M → "X.XM" */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
 
 export function ClaudeChat() {
   const sessionKey = usePillSessionId();
@@ -411,6 +780,7 @@ export function ClaudeChat() {
   const streamingText = useClaudeStateForKey(sessionKey, (s) => s.streamingText);
   const streamingThinking = useClaudeStateForKey(sessionKey, (s) => s.streamingThinking);
   const activeToolUse = useClaudeStateForKey(sessionKey, (s) => s.activeToolUse);
+  const pendingInteractions = useClaudeStateForKey(sessionKey, (s) => s.pendingInteractions);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -441,6 +811,15 @@ export function ClaudeChat() {
               const showRole = !prev || prev.role !== msg.role;
               return <MessageBlock key={i} msg={msg} showRole={showRole} />;
             })}
+
+            {/* Interactive permission cards (in interactive mode) */}
+            {pendingInteractions.length > 0 && (
+              <div className="claude-chat__interactions">
+                {pendingInteractions.map((p) => (
+                  <InteractionCard key={p.toolUseId} interaction={p} sessionKey={sessionKey!} />
+                ))}
+              </div>
+            )}
 
             {/* Live streaming section */}
             {isStreaming && (
@@ -511,12 +890,12 @@ export function ClaudeChat() {
 
       {sessionInfo && (
         <div className="claude-chat__status-bar">
-          <span>{sessionInfo.model}</span>
+          <ModelSelector currentModel={sessionInfo.model} />
           {sessionInfo.contextWindow > 0 && (
             <span>
               {sessionInfo.tokensUsed > 0
-                ? `${(sessionInfo.tokensUsed / 1000).toFixed(1)}k / ${(sessionInfo.contextWindow / 1000).toFixed(0)}k`
-                : `${(sessionInfo.contextWindow / 1000).toFixed(0)}k context`}
+                ? `${formatTokens(sessionInfo.tokensUsed)} / ${formatTokens(sessionInfo.contextWindow)}`
+                : `${formatTokens(sessionInfo.contextWindow)} context`}
             </span>
           )}
           {(() => {

@@ -208,7 +208,11 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     if (proj?.isSpawned) return;
     // Write MCP config file and pass path to Claude if servers are configured
     const mcpConfigPath = await useMcpStore.getState().writeClaudeConfigFile();
-    await invoke("spawn_claude", { key, cwd: workspaceRoot || "/", mcpConfigPath });
+    // Resume previous session if available (preserves conversation after interrupt/crash)
+    const resumeSessionId = proj?.lastSessionId || undefined;
+    const model = proj?.selectedModel || undefined;
+    const permissionMode = useSettingsStore.getState().claude.permissionMode;
+    await invoke("spawn_claude", { key, cwd: workspaceRoot || "/", mcpConfigPath, sessionId: resumeSessionId, model, permissionMode });
     useClaudeStore.getState().setProjectSpawned(key, true);
   };
 
@@ -379,9 +383,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   const handleInterrupt = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const key = sessionId;
-    await invoke("interrupt_claude", { key });
     syncClaudeKey();
-    claudeSetShowingOutput(false);
+    await useClaudeStore.getState().interruptClaude(key);
     setActivityStatus(sessionId, "idle");
     requestAnimationFrame(() => inputRef.current?.focus());
   };
