@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   useClaudeStore,
   useClaudeStateForKey,
@@ -403,6 +404,49 @@ function ToolProgress({ name, input }: { name: string; input: Record<string, unk
   );
 }
 
+// ── User text with paste collapse ────────────────────────────────────
+
+const PASTE_DISPLAY_THRESHOLD = 5;
+
+function UserText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = text.split("\n");
+
+  if (lines.length < PASTE_DISPLAY_THRESHOLD) {
+    return <>{text}</>;
+  }
+
+  if (expanded) {
+    return (
+      <>
+        {text}
+        <button
+          className="claude-chat__paste-toggle"
+          onClick={() => setExpanded(false)}
+        >
+          Collapse
+        </button>
+      </>
+    );
+  }
+
+  // Show first line (if it looks like a prompt) + collapsed indicator
+  const firstLine = lines[0].trim();
+  const hasPrompt = firstLine.length > 0 && !firstLine.startsWith(" ");
+
+  return (
+    <>
+      {hasPrompt && <>{firstLine}{"\n"}</>}
+      <button
+        className="claude-chat__paste-toggle"
+        onClick={() => setExpanded(true)}
+      >
+        [Pasted {lines.length} lines]
+      </button>
+    </>
+  );
+}
+
 // ── Message block ───────────────────────────────────────────────────
 
 function MessageBlock({
@@ -440,7 +484,7 @@ function MessageBlock({
 
       {msg.text && (
         <div className="claude-chat__content">
-          {isUser ? msg.text : <Markdown>{msg.text}</Markdown>}
+          {isUser ? <UserText text={msg.text} /> : <Markdown>{msg.text}</Markdown>}
         </div>
       )}
 
@@ -563,50 +607,29 @@ function InteractionCard({
   sessionKey: string;
 }) {
   const resolveInteraction = useClaudeStore((s) => s.resolveInteraction);
+  const addUserMessage = useClaudeStore((s) => s.addUserMessage);
+  const [dismissed, setDismissed] = useState(false);
   const isResolved = interaction.autoAnswer != null;
 
   const handle = (value: string) => {
-    if (isResolved) return; // Already answered
-    resolveInteraction(sessionKey, interaction.toolUseId, value);
+    if (!isResolved) {
+      // Not yet answered — send tool_result directly
+      resolveInteraction(sessionKey, interaction.toolUseId, value);
+    } else {
+      // Already auto-answered — send a correction as a follow-up user message
+      const questionText = interaction.questions?.[0]?.question || interaction.toolName;
+      useClaudeStore.getState().setActiveKey(sessionKey);
+      addUserMessage(value);
+      const msg = JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: `Regarding your question "${questionText}": my answer is: ${value}` }] },
+      });
+      invoke("write_claude", { key: sessionKey, data: msg }).catch(() => {});
+      setDismissed(true);
+    }
   };
 
-  // ── Auto-resolved: show what was asked + auto-answer ──
-  if (isResolved) {
-    const questionText = interaction.questions?.[0]?.question
-      || interaction.plan
-      || (interaction.category === "plan-enter" ? "Enter plan mode?" : interaction.toolName);
-
-    return (
-      <div className="claude-chat__interaction claude-chat__interaction--resolved">
-        <div className="claude-chat__interaction-header">
-          <span className="claude-chat__interaction-tool">
-            {interaction.category === "question" ? "Question" : interaction.category === "plan-exit" ? "Plan" : interaction.toolName}
-          </span>
-          <span className="claude-chat__interaction-auto-badge">auto-answered</span>
-        </div>
-        <p className="claude-chat__interaction-question claude-chat__interaction-question--dim">
-          {questionText}
-        </p>
-        {interaction.questions?.[0]?.options && interaction.questions[0].options.length > 0 && (
-          <div className="claude-chat__interaction-options claude-chat__interaction-options--dim">
-            {interaction.questions[0].options.map((opt) => (
-              <span
-                key={opt.label}
-                className={`claude-chat__interaction-option claude-chat__interaction-option--readonly${
-                  interaction.autoAnswer === opt.label ? " claude-chat__interaction-option--chosen" : ""
-                }`}
-              >
-                {opt.label}
-              </span>
-            ))}
-          </div>
-        )}
-        <p className="claude-chat__interaction-answer">
-          Answered: {interaction.autoAnswer}
-        </p>
-      </div>
-    );
-  }
+  if (dismissed) return null;
 
   // ── AskUserQuestion — structured multi-question card ──
   if (interaction.category === "question" && interaction.questions) {
@@ -640,6 +663,7 @@ function InteractionCard({
       <div className="claude-chat__interaction claude-chat__interaction--plan">
         <div className="claude-chat__interaction-header">
           <span className="claude-chat__interaction-tool">Plan Ready</span>
+          {isResolved && <span className="claude-chat__interaction-auto-badge">auto-approved — click to change</span>}
         </div>
         {interaction.plan && (
           <div className="claude-chat__plan-content">
@@ -658,26 +682,9 @@ function InteractionCard({
     );
   }
 
-  // ── EnterPlanMode — confirm entering plan mode ──
+  // ── EnterPlanMode — no interactive card needed, just tracked via isInPlanMode badge
   if (interaction.category === "plan-enter") {
-    return (
-      <div className="claude-chat__interaction claude-chat__interaction--plan">
-        <div className="claude-chat__interaction-header">
-          <span className="claude-chat__interaction-tool">Enter Plan Mode</span>
-        </div>
-        <p className="claude-chat__interaction-question">
-          Claude wants to switch to plan mode to design an approach before implementing.
-        </p>
-        <div className="claude-chat__interaction-actions">
-          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
-            Enter Plan Mode
-          </button>
-          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
-            Skip Planning
-          </button>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // ── File edit/write — show file path + diff + approve/deny ──
@@ -781,6 +788,7 @@ export function ClaudeChat() {
   const streamingThinking = useClaudeStateForKey(sessionKey, (s) => s.streamingThinking);
   const activeToolUse = useClaudeStateForKey(sessionKey, (s) => s.activeToolUse);
   const pendingInteractions = useClaudeStateForKey(sessionKey, (s) => s.pendingInteractions);
+  const isInPlanMode = useClaudeStateForKey(sessionKey, (s) => s.isInPlanMode);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -891,6 +899,9 @@ export function ClaudeChat() {
       {sessionInfo && (
         <div className="claude-chat__status-bar">
           <ModelSelector currentModel={sessionInfo.model} />
+          {isInPlanMode && (
+            <span className="claude-chat__plan-badge">Plan Mode</span>
+          )}
           {sessionInfo.contextWindow > 0 && (
             <span>
               {sessionInfo.tokensUsed > 0

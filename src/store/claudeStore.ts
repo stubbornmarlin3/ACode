@@ -102,6 +102,8 @@ export interface ClaudeProjectState {
   lastSessionId: string | null;
   /** Tool uses awaiting user interaction (only in interactive permission mode) */
   pendingInteractions: PendingInteraction[];
+  /** Whether Claude is currently in plan mode */
+  isInPlanMode: boolean;
 }
 
 const EMPTY_PROJECT: ClaudeProjectState = {
@@ -119,6 +121,7 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   selectedModel: null,
   lastSessionId: null,
   pendingInteractions: [],
+  isInPlanMode: false,
 };
 
 interface ClaudeStore {
@@ -223,6 +226,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     let activeToolUse = proj.activeToolUse;
     let lastSessionId = proj.lastSessionId;
     let pendingInteractions = [...proj.pendingInteractions];
+    let isInPlanMode = proj.isInPlanMode;
     const permissionMode = useSettingsStore.getState().claude.permissionMode;
     const isSmart = permissionMode === "smart";
     const isInteractive = permissionMode === "interactive";
@@ -324,7 +328,11 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
               nameLower.includes("exitplan") || nameLower.includes("exit_plan");
             const isPlanEnter = PLAN_ENTER_TOOLS.has(tu.name) ||
               nameLower.includes("enterplan") || nameLower.includes("enter_plan");
-            const isAlwaysInteractive = isQuestionTool || isPlanExit || isPlanEnter;
+            const isAlwaysInteractive = isQuestionTool || isPlanExit;
+
+            // Track plan mode transitions
+            if (isPlanEnter) isInPlanMode = true;
+            if (isPlanExit) isInPlanMode = false;
 
             // In "smart" mode: auto-approve non-interactive tools immediately via stdin
             if (isSmart && !isAlwaysInteractive) {
@@ -481,6 +489,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         activeToolUse,
         lastSessionId,
         pendingInteractions,
+        isInPlanMode,
       }),
     });
   },

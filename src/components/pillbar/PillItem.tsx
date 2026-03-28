@@ -121,6 +121,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
 
   // Stash the current input when entering history browsing
   const draftRef = useRef("");
+  // Stores full pasted text when collapsed to "[Pasted X lines]"
+  const pastedRef = useRef<string | null>(null);
 
   // Claude store — per-session state
   const claudeLastOutputLine = useClaudeStateForKey(sessionId, (s) => s.lastOutputLine);
@@ -216,11 +218,29 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     useClaudeStore.getState().setProjectSpawned(key, true);
   };
 
+  const PASTE_COLLAPSE_THRESHOLD = 5;
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData("text");
+    const lineCount = pasted.split("\n").length;
+    if (lineCount >= PASTE_COLLAPSE_THRESHOLD) {
+      e.preventDefault();
+      pastedRef.current = pasted;
+      if (inputRef.current) {
+        inputRef.current.value = `[Pasted ${lineCount} lines]`;
+      }
+    } else {
+      pastedRef.current = null;
+    }
+  };
+
   const handleSubmit = async () => {
     const input = inputRef.current;
     if (!input || !input.value.trim()) return;
 
-    const value = input.value.trim();
+    // Use the full pasted text if it was collapsed
+    const value = pastedRef.current ?? input.value.trim();
+    pastedRef.current = null;
     input.value = "";
 
     if (isTerminal) {
@@ -518,6 +538,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
               aria-label={`${text} input`}
               rows={1}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
             />
             <button
               className="pill-item__submit"

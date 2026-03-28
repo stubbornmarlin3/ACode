@@ -54,13 +54,6 @@ fn make_remote_callbacks<'a>(use_token: bool) -> RemoteCallbacks<'a> {
     callbacks
 }
 
-/// Fetch options for background operations (no token, fail silently).
-fn make_fetch_options_silent<'a>() -> git2::FetchOptions<'a> {
-    let mut fo = git2::FetchOptions::new();
-    fo.remote_callbacks(make_remote_callbacks(false));
-    fo
-}
-
 /// Fetch options for user-initiated operations (uses stored token).
 fn make_fetch_options<'a>() -> git2::FetchOptions<'a> {
     let mut fo = git2::FetchOptions::new();

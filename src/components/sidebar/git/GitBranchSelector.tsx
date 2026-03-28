@@ -34,6 +34,9 @@ export function GitBranchSelector() {
     : [];
   const hasBranchesToShow = branches && (branches.local.length > 1 || remoteOnly.length > 0);
 
+  const [confirmDelete, setConfirmDelete] = useState<{ name: string; isRemote: boolean; hasRemote: boolean } | null>(null);
+  const [deleteRemoteAlso, setDeleteRemoteAlso] = useState(false);
+
   useEffect(() => {
     if (!branchOpen && !menuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -55,9 +58,6 @@ export function GitBranchSelector() {
     setBranchOpen(false);
     await checkoutBranch(workspaceRoot, branch);
   };
-
-  const [confirmDelete, setConfirmDelete] = useState<{ name: string; isRemote: boolean; hasRemote: boolean } | null>(null);
-  const [deleteRemoteAlso, setDeleteRemoteAlso] = useState(false);
 
   const handleDeleteBranch = (name: string, isRemote: boolean, e: React.MouseEvent) => {
     e.stopPropagation();

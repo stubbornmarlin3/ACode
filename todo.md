@@ -22,12 +22,12 @@
 - [ ] Doesn't show indicator that process is running if new input isnt streaming in (need to follow markers and find edge cases)
 
 # Claude
-- [ ] Interuptions cause conversation loss
-- [ ] Add interactive elements in output panel for certain things (like if questions are asked that need answered, plan mode/normal mode, approving edits and leaving plan mode (need to tell it multiple times to move out of plan mode and type /plan even tho it doesnt do anything))
-- [ ] Context tracking is way off (will show I am at 15000k/1000k of tokens)
-- [ ] MCP tool icon in status bar pushes the bar to be larger, meaning it is not in line with other panels (this also happens when the pillbar is multiline, the bottom of the output panel should stay in line with everything)
-- [ ] Way to change model
-- [ ] Reconnecting model loses conversation loss
+- [x] Interuptions cause conversation loss
+- [x] Add interactive elements in output panel for certain things (like if questions are asked that need answered, plan mode/normal mode, approving edits and leaving plan mode (need to tell it multiple times to move out of plan mode and type /plan even tho it doesnt do anything))
+- [x] Context tracking is way off (will show I am at 15000k/1000k of tokens)
+- [x] MCP tool icon in status bar pushes the bar to be larger, meaning it is not in line with other panels (this also happens when the pillbar is multiline, the bottom of the output panel should stay in line with everything)
+- [x] Way to change model
+- [x] Reconnecting model loses conversation loss
 
 # Github / Git
 - [ ] Sometimes loses github login until the panel is opened
