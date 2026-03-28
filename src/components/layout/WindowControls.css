@@ -40,3 +40,8 @@
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.08);
 }
+
+.window-controls--macos {
+  right: 36px;
+  left: auto;
+}

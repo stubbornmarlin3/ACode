@@ -5,18 +5,17 @@ import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen } from 
 import { useLayoutStore } from "../../store/layoutStore";
 import "./WindowControls.css";
 
+const currentPlatform = platform();
+
 export function WindowControls() {
-  const [isWindows, setIsWindows] = useState(false);
+  const isWindows = currentPlatform === "windows";
+  const isMacos = currentPlatform === "macos";
   const [maximized, setMaximized] = useState(false);
   const isSidebarOpen = useLayoutStore((s) => s.sidebar.isOpen);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const settingsOpen = useLayoutStore((s) => s.settingsOpen);
   const setSettingsOpen = useLayoutStore((s) => s.setSettingsOpen);
   const hasProject = useLayoutStore((s) => s.projects.activeProjectId) !== null;
-
-  useEffect(() => {
-    setIsWindows(platform() === "windows");
-  }, []);
 
   useEffect(() => {
     if (!isWindows) return;
@@ -30,12 +29,8 @@ export function WindowControls() {
     };
   }, [isWindows]);
 
-  if (!isWindows) return null;
-
-  const win = getCurrentWindow();
-
-  return (
-    <div className="window-controls">
+  const actionButtons = (
+    <>
       {hasProject && !settingsOpen && (
         <button
           className="window-controls__btn window-controls__btn--action"
@@ -54,6 +49,24 @@ export function WindowControls() {
       >
         <Settings size={14} />
       </button>
+    </>
+  );
+
+  if (isMacos) {
+    return (
+      <div className="window-controls window-controls--macos">
+        {actionButtons}
+      </div>
+    );
+  }
+
+  if (!isWindows) return null;
+
+  const win = getCurrentWindow();
+
+  return (
+    <div className="window-controls">
+      {actionButtons}
       <button
         className="window-controls__btn"
         onClick={() => win.minimize()}
