@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 
 /* ── MCP Server config types ── */
@@ -241,7 +242,10 @@ let _saveTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
 function scheduleSave(key: string, fn: () => Promise<void>) {
   if (_saveTimers[key]) clearTimeout(_saveTimers[key]);
-  _saveTimers[key] = setTimeout(() => fn().catch(() => {}), 300);
+  _saveTimers[key] = setTimeout(() => {
+    delete _saveTimers[key];
+    fn().catch(() => {});
+  }, 300);
 }
 
 // Shell metacharacters that could enable command injection
@@ -319,7 +323,7 @@ async function saveAcodeProject(projectPath: string, servers: McpServerConfig[])
   await writeJsonFile(path, configsToFile(servers, true));
 }
 
-export const useMcpStore = create<McpStore>()((set, get) => ({
+export const useMcpStore = create<McpStore>()(devtools((set, get) => ({
   claudeUserServers: [],
   projectMcpJsonServers: [],
   globalServers: [],
@@ -528,4 +532,4 @@ export const useMcpStore = create<McpStore>()((set, get) => ({
       set((s) => ({ health: { ...s.health, [id]: "error" } }));
     }
   },
-}));
+}), { name: "mcpStore", enabled: import.meta.env.DEV }));

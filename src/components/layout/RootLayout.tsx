@@ -1,5 +1,5 @@
 import "./RootLayout.css";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { listen } from "@tauri-apps/api/event";
@@ -20,6 +20,7 @@ import { EditorPane } from "../editor/EditorPane";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
 import { TitleBarLogo } from "./TitleBarLogo";
+import { ResizeHandle } from "./ResizeHandle";
 import { BannerToastContainer } from "../notifications/BannerToast";
 import { useNotificationStore } from "../../store/notificationStore";
 import { CreateBranchDialog } from "../sidebar/git/CreateBranchDialog";
@@ -239,6 +240,19 @@ export function RootLayout() {
   const hasProject = activeProjectId !== null;
   const hasProjectsInRail = projects.length > 0;
 
+  const sidebarWidthRef = useRef(appearance.sidebarWidth);
+  sidebarWidthRef.current = appearance.sidebarWidth;
+
+  const handleSidebarResize = useCallback((delta: number) => {
+    const next = Math.max(140, Math.min(600, sidebarWidthRef.current + delta));
+    sidebarWidthRef.current = next;
+    document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
+  }, []);
+
+  const handleSidebarResizeEnd = useCallback(() => {
+    useSettingsStore.getState().setAppearanceSetting("sidebarWidth", sidebarWidthRef.current);
+  }, []);
+
   // Load global settings and MCP configs from disk on startup
   useEffect(() => {
     useSettingsStore.getState().loadGlobal();
@@ -249,8 +263,7 @@ export function RootLayout() {
   // Apply appearance settings as CSS custom properties
   useEffect(() => {
     document.documentElement.style.setProperty("--sidebar-width", `${appearance.sidebarWidth}px`);
-    document.documentElement.style.setProperty("--pill-panel-height", `${appearance.pillPanelHeight}vh`);
-  }, [appearance.sidebarWidth, appearance.pillPanelHeight]);
+  }, [appearance.sidebarWidth]);
 
   // Listen for file system changes and refresh the sidebar tree
   useEffect(() => {
@@ -341,7 +354,7 @@ export function RootLayout() {
             if (termSession) {
               layout.setActivePillId(termSession.id);
               useTerminalStore.getState().setActiveKey(termSession.id);
-              layout.togglePanelOpen();
+              layout.togglePanelOpen(termSession.id);
             }
             return;
           }
@@ -355,7 +368,7 @@ export function RootLayout() {
             if (claudeSession) {
               layout.setActivePillId(claudeSession.id);
               useClaudeStore.getState().setActiveKey(claudeSession.id);
-              layout.togglePanelOpen();
+              layout.togglePanelOpen(claudeSession.id);
             }
             return;
           }
@@ -399,14 +412,15 @@ export function RootLayout() {
       <TitleBarLogo />
       <WindowControls />
       {isSidebarOpen && <Sidebar onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />}
+      {isSidebarOpen && <ResizeHandle direction="horizontal" onResize={handleSidebarResize} onResizeEnd={handleSidebarResizeEnd} />}
       <div className="root-layout__center">
         <div className="root-layout__titlebar" onMouseDown={handleDragStart} onDoubleClick={handleDoubleClick}>
           <span className="root-layout__title">ACode</span>
         </div>
-        <PillBar />
         <div className="editor-card">
           <EditorTabBar />
           <EditorPane />
+          <PillBar />
         </div>
       </div>
       <ProjectsRail onDrag={handleDragStart} onDoubleClick={handleDoubleClick} />

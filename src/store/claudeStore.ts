@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import { useActivityStore } from "./activityStore";
 import { useLayoutStore } from "./layoutStore";
@@ -181,7 +182,7 @@ function setProj(
   return { ...projects, [key]: { ...prev, ...partial } };
 }
 
-export const useClaudeStore = create<ClaudeStore>((set, get) => ({
+export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
   activeKey: null,
   projects: {},
 
@@ -614,7 +615,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
       }),
     });
   },
-}));
+}), { name: "claudeStore", enabled: import.meta.env.DEV }));
 
 /**
  * Selector hook to read the active project's Claude state.

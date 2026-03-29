@@ -729,6 +729,32 @@ export function ClaudeChat() {
 
   return (
     <div className="claude-chat">
+      {sessionInfo && (
+        <div className="claude-chat__status-bar">
+          <ModelSelector currentModel={sessionInfo.model} />
+          {isInPlanMode && (
+            <span className="claude-chat__plan-badge">Plan Mode</span>
+          )}
+          {sessionInfo.contextWindow > 0 && (
+            <span>
+              {sessionInfo.tokensUsed > 0
+                ? `${formatTokens(sessionInfo.tokensUsed)} / ${formatTokens(sessionInfo.contextWindow)}`
+                : `${formatTokens(sessionInfo.contextWindow)} context`}
+            </span>
+          )}
+          {(() => {
+            const mcpTools = sessionInfo.tools.filter((t) => t.startsWith("mcp__"));
+            if (mcpTools.length === 0) return null;
+            const serverNames = [...new Set(mcpTools.map((t) => t.split("__")[1]))];
+            return (
+              <span className="claude-chat__mcp-badge" title={serverNames.join(", ")}>
+                {mcpTools.length} MCP tool{mcpTools.length !== 1 ? "s" : ""}
+              </span>
+            );
+          })()}
+        </div>
+      )}
+
       <div className="claude-chat__scroll" ref={scrollRef}>
         <McpStatusPanel />
 
@@ -819,32 +845,6 @@ export function ClaudeChat() {
           </div>
         )}
       </div>
-
-      {sessionInfo && (
-        <div className="claude-chat__status-bar">
-          <ModelSelector currentModel={sessionInfo.model} />
-          {isInPlanMode && (
-            <span className="claude-chat__plan-badge">Plan Mode</span>
-          )}
-          {sessionInfo.contextWindow > 0 && (
-            <span>
-              {sessionInfo.tokensUsed > 0
-                ? `${formatTokens(sessionInfo.tokensUsed)} / ${formatTokens(sessionInfo.contextWindow)}`
-                : `${formatTokens(sessionInfo.contextWindow)} context`}
-            </span>
-          )}
-          {(() => {
-            const mcpTools = sessionInfo.tools.filter((t) => t.startsWith("mcp__"));
-            if (mcpTools.length === 0) return null;
-            const serverNames = [...new Set(mcpTools.map((t) => t.split("__")[1]))];
-            return (
-              <span className="claude-chat__mcp-badge" title={serverNames.join(", ")}>
-                {mcpTools.length} MCP tool{mcpTools.length !== 1 ? "s" : ""}
-              </span>
-            );
-          })()}
-        </div>
-      )}
     </div>
   );
 }

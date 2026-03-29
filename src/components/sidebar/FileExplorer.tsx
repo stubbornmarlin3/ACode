@@ -17,9 +17,79 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { platform } from "@tauri-apps/plugin-os";
 import { clipboardWrite } from "../../utils/clipboard";
+import { getFileIcon } from "../../utils/fileIcons";
 import { useEditorStore, FileEntry } from "../../store/editorStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./FileExplorer.css";
+
+/* ── Context menu builders ── */
+
+function buildFileContextMenu(
+  entry: FileEntry,
+  callbacks: {
+    openFile: (path: string, name: string) => void;
+    refreshTree: () => void;
+    onNewFile: (parentPath: string) => void;
+    onNewFolder: (parentPath: string) => void;
+    setRenaming: (v: boolean) => void;
+  },
+): MenuEntry[] {
+  const parentPath = entry.is_dir ? entry.path : entry.path.replace(/[\\/][^\\/]+$/, "");
+  const items: MenuEntry[] = [];
+
+  if (!entry.is_dir) {
+    items.push({ label: "Open", icon: <File size={12} />, action: () => callbacks.openFile(entry.path, entry.name) });
+    items.push("separator");
+  }
+
+  if (entry.is_dir) {
+    items.push({ label: "New File", icon: <FilePlus size={12} />, action: () => callbacks.onNewFile(entry.path) });
+    items.push({ label: "New Folder", icon: <FolderPlus size={12} />, action: () => callbacks.onNewFolder(entry.path) });
+    items.push("separator");
+  }
+
+  items.push({ label: "Copy Name", icon: <Copy size={12} />, action: () => clipboardWrite(entry.name) });
+  items.push({ label: "Copy Path", icon: <Copy size={12} />, action: () => clipboardWrite(entry.path) });
+  items.push("separator");
+  items.push({ label: "Reveal in File Explorer", icon: <ExternalLink size={12} />, action: () => invoke("reveal_in_explorer", { path: entry.path }) });
+  items.push({ label: "Open in Terminal", icon: <Terminal size={12} />, action: () => invoke("open_in_terminal", { path: entry.is_dir ? entry.path : parentPath }) });
+  items.push("separator");
+  items.push({ label: "Rename", icon: <Pencil size={12} />, action: () => callbacks.setRenaming(true) });
+  items.push({
+    label: "Delete",
+    icon: <Trash2 size={12} />,
+    danger: true,
+    action: async () => {
+      await invoke("delete_path", { path: entry.path });
+      callbacks.refreshTree();
+    },
+  });
+
+  return items;
+}
+
+function buildExplorerRootMenu(
+  workspaceRoot: string,
+  callbacks: {
+    handleNewFile: (parentPath: string) => void;
+    handleNewFolder: (parentPath: string) => void;
+  },
+): MenuEntry[] {
+  return [
+    { label: "New File", icon: <FilePlus size={12} />, action: () => callbacks.handleNewFile(workspaceRoot) },
+    { label: "New Folder", icon: <FolderPlus size={12} />, action: () => callbacks.handleNewFolder(workspaceRoot) },
+    "separator",
+    {
+      label: "Paste",
+      icon: <ClipboardPaste size={12} />,
+      shortcut: platform() === "macos" ? "Cmd+V" : "Ctrl+V",
+      action: async () => { /* Placeholder — clipboard file paste requires native support */ },
+    },
+    "separator",
+    { label: "Reveal in File Explorer", icon: <ExternalLink size={12} />, action: () => invoke("reveal_in_explorer", { path: workspaceRoot }) },
+    { label: "Open in Terminal", icon: <Terminal size={12} />, action: () => invoke("open_in_terminal", { path: workspaceRoot }) },
+  ];
+}
 
 function InlineInput({
   defaultValue,
@@ -100,73 +170,7 @@ function FileTreeItem({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
-      const parentPath = entry.is_dir ? entry.path : entry.path.replace(/[\\/][^\\/]+$/, "");
-      const items: MenuEntry[] = [];
-
-      if (!entry.is_dir) {
-        items.push({
-          label: "Open",
-          icon: <File size={12} />,
-          action: () => openFile(entry.path, entry.name),
-        });
-        items.push("separator");
-      }
-
-      if (entry.is_dir) {
-        items.push({
-          label: "New File",
-          icon: <FilePlus size={12} />,
-          action: () => onNewFile(entry.path),
-        });
-        items.push({
-          label: "New Folder",
-          icon: <FolderPlus size={12} />,
-          action: () => onNewFolder(entry.path),
-        });
-        items.push("separator");
-      }
-
-      items.push({
-        label: "Copy Name",
-        icon: <Copy size={12} />,
-        action: () => clipboardWrite(entry.name),
-      });
-      items.push({
-        label: "Copy Path",
-        icon: <Copy size={12} />,
-        action: () => clipboardWrite(entry.path),
-      });
-
-      items.push("separator");
-
-      items.push({
-        label: "Reveal in File Explorer",
-        icon: <ExternalLink size={12} />,
-        action: () => invoke("reveal_in_explorer", { path: entry.path }),
-      });
-      items.push({
-        label: "Open in Terminal",
-        icon: <Terminal size={12} />,
-        action: () => invoke("open_in_terminal", { path: entry.is_dir ? entry.path : parentPath }),
-      });
-
-      items.push("separator");
-
-      items.push({
-        label: "Rename",
-        icon: <Pencil size={12} />,
-        action: () => setRenaming(true),
-      });
-      items.push({
-        label: "Delete",
-        icon: <Trash2 size={12} />,
-        danger: true,
-        action: async () => {
-          await invoke("delete_path", { path: entry.path });
-          refreshTree();
-        },
-      });
-
+      const items = buildFileContextMenu(entry, { openFile, refreshTree, onNewFile, onNewFolder, setRenaming });
       contextMenu.show(e, items);
     },
     [entry, contextMenu, openFile, refreshTree, onNewFile, onNewFolder]
@@ -233,7 +237,7 @@ function FileTreeItem({
         ) : (
           <>
             <span className="file-tree-item__chevron" />
-            <File size={14} className="file-tree-item__icon" />
+            <span className="file-tree-item__icon">{getFileIcon(entry.name, 14)}</span>
           </>
         )}
         <span className="file-tree-item__name">{entry.name}</span>
@@ -284,38 +288,7 @@ export function FileExplorer() {
   const handleBackgroundContext = useCallback(
     (e: React.MouseEvent) => {
       if (!workspaceRoot) return;
-      const items: MenuEntry[] = [
-        {
-          label: "New File",
-          icon: <FilePlus size={12} />,
-          action: () => handleNewFile(workspaceRoot),
-        },
-        {
-          label: "New Folder",
-          icon: <FolderPlus size={12} />,
-          action: () => handleNewFolder(workspaceRoot),
-        },
-        "separator",
-        {
-          label: "Paste",
-          icon: <ClipboardPaste size={12} />,
-          shortcut: platform() === "macos" ? "Cmd+V" : "Ctrl+V",
-          action: async () => {
-            // Paste is a placeholder — clipboard file paste requires native support
-          },
-        },
-        "separator",
-        {
-          label: "Reveal in File Explorer",
-          icon: <ExternalLink size={12} />,
-          action: () => invoke("reveal_in_explorer", { path: workspaceRoot }),
-        },
-        {
-          label: "Open in Terminal",
-          icon: <Terminal size={12} />,
-          action: () => invoke("open_in_terminal", { path: workspaceRoot }),
-        },
-      ];
+      const items = buildExplorerRootMenu(workspaceRoot, { handleNewFile, handleNewFolder });
       contextMenu.show(e, items);
     },
     [workspaceRoot, contextMenu, handleNewFile, handleNewFolder]

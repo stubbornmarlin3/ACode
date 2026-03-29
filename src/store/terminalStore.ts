@@ -1,7 +1,11 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 
 /** Max output buffer size in characters (~512KB). Older content is trimmed from the front. */
 const MAX_BUFFER_SIZE = 512 * 1024;
+
+/** Max number of commands to keep in history per terminal session. */
+const MAX_HISTORY_SIZE = 500;
 
 export interface TerminalProjectState {
   isSpawned: boolean;
@@ -64,7 +68,7 @@ function setProj(
   return { ...projects, [key]: { ...prev, ...partial } };
 }
 
-export const useTerminalStore = create<TerminalStore>((set, get) => ({
+export const useTerminalStore = create<TerminalStore>()(devtools((set, get) => ({
   activeKey: null,
   projects: {},
 
@@ -97,8 +101,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const { activeKey, projects } = get();
     if (!activeKey) return;
     const proj = getProj(projects, activeKey);
+    let history = [...proj.history, cmd];
+    if (history.length > MAX_HISTORY_SIZE) {
+      history = history.slice(history.length - MAX_HISTORY_SIZE);
+    }
     set({ projects: setProj(projects, activeKey, {
-      history: [...proj.history, cmd],
+      history,
       historyIndex: -1,
     }) });
   },
@@ -125,7 +133,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     if (!proj) return;
     set({ projects: { ...projects, [key]: { ...proj, outputBuffer: "" } } });
   },
-}));
+}), { name: "terminalStore", enabled: import.meta.env.DEV }));
 
 /** Selector hook to read the active project's terminal state. */
 export function useActiveTerminalState<T>(selector: (s: TerminalProjectState) => T): T {

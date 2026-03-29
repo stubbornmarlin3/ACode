@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import { useLayoutStore } from "./layoutStore";
 
@@ -21,6 +22,16 @@ export interface BannerToast {
   placement: "project-rail" | "collapsed-pill" | "silent";
   /** Used to trigger fade-out before removal */
   fading: boolean;
+}
+
+/** Track banner auto-dismiss timers so they can be cancelled on manual dismiss */
+const _bannerTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+function clearBannerTimer(id: string) {
+  if (_bannerTimers[id]) {
+    clearTimeout(_bannerTimers[id]);
+    delete _bannerTimers[id];
+  }
 }
 
 interface NotificationStore {
@@ -68,7 +79,7 @@ async function loadNotifications(): Promise<AppNotification[]> {
   }
 }
 
-export const useNotificationStore = create<NotificationStore>((set, get) => ({
+export const useNotificationStore = create<NotificationStore>()(devtools((set, get) => ({
   notifications: [],
   unreadCount: 0,
   banners: [],
@@ -117,14 +128,17 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
       const banners = placement !== "silent" ? [...s.banners, banner] : s.banners;
 
-      // Auto-dismiss banner after 4s
+      // Auto-dismiss banner after 4s (timer is tracked so manual dismiss can cancel it)
       if (placement !== "silent") {
-        setTimeout(() => {
+        const fadeTimer = setTimeout(() => {
           get().fadeBanner(notification.id);
-          setTimeout(() => {
+          const removeTimer = setTimeout(() => {
             get().removeBanner(notification.id);
+            delete _bannerTimers[notification.id];
           }, 400);
+          _bannerTimers[notification.id] = removeTimer;
         }, 4000);
+        _bannerTimers[notification.id] = fadeTimer;
       }
 
       persistNotifications(notifications);
@@ -132,13 +146,16 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     });
   },
 
-  dismiss: (id) =>
+  dismiss: (id) => {
+    clearBannerTimer(id);
     set((s) => {
       const notifications = s.notifications.filter((n) => n.id !== id);
+      const banners = s.banners.filter((b) => b.id !== id);
       const unreadCount = notifications.filter((n) => !n.read).length;
       persistNotifications(notifications);
-      return { notifications, unreadCount };
-    }),
+      return { notifications, unreadCount, banners };
+    });
+  },
 
   clearAll: () => {
     set({ notifications: [], unreadCount: 0 });
@@ -170,10 +187,12 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     }
   },
 
-  removeBanner: (id) =>
+  removeBanner: (id) => {
+    clearBannerTimer(id);
     set((s) => ({
       banners: s.banners.filter((b) => b.id !== id),
-    })),
+    }));
+  },
 
   fadeBanner: (id) =>
     set((s) => ({
@@ -187,4 +206,4 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     const unreadCount = notifications.filter((n) => !n.read).length;
     set({ notifications, unreadCount });
   },
-}));
+}), { name: "notificationStore", enabled: import.meta.env.DEV }));

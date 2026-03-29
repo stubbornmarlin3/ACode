@@ -1,5 +1,18 @@
 .pill-bar {
-  flex-shrink: 0;
+  position: absolute;
+  bottom: var(--spacing-2);
+  left: var(--spacing-2);
+  right: var(--spacing-2);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(100% - var(--tab-bar-height) - var(--spacing-2) * 2); /* leave room for tab bar */
+  pointer-events: none;
+}
+
+.pill-bar > * {
+  pointer-events: auto;
 }
 
 .pill-bar__row {
@@ -22,6 +35,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-1);
+  justify-content: flex-end;
 }
 
 .pill-bar__column-pills {
@@ -122,9 +136,10 @@
   flex-direction: row;
   align-items: center;
   min-height: 40px;
-  background: rgba(8, 12, 18, 0.6);
+  background: rgba(8, 12, 18, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
+  backdrop-filter: blur(12px);
   transition: flex 250ms ease, width 250ms ease, border-radius 250ms ease,
     border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
@@ -217,8 +232,9 @@
   min-width: 0;
   cursor: text;
   resize: none;
-  overflow: hidden;
+  overflow-y: auto;
   field-sizing: content;
+  max-height: calc(13px * 1.4 * 10 + 20px); /* 10 lines + padding */
   padding: 10px 0;
   margin: 0;
 }
@@ -357,24 +373,36 @@
 
 /* ── Panel slot (inside column) ── */
 .pill-panel__slot {
-  height: 0;
   min-width: 0;
   border-radius: 12px;
   overflow: hidden;
-  transition: height 200ms ease;
+  display: flex;
+  flex-direction: column;
 }
 
-.pill-bar[data-pill-state="panel-open"] .pill-panel__slot {
-  height: var(--pill-panel-height);
+.pill-panel__resize-handle {
+  height: 6px;
+  cursor: row-resize;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 150ms ease;
+  border-radius: 12px 12px 0 0;
+}
+
+.pill-panel__resize-handle:hover,
+.pill-panel__resize-handle:active {
+  background: var(--accent-blue);
 }
 
 .pill-panel__content {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   padding: var(--spacing-3);
-  background: rgba(8, 12, 18, 0.6);
+  background: rgba(8, 12, 18, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   overflow-y: auto;
+  backdrop-filter: blur(12px);
 }
 
 /* Remove padding when terminal is inside — xterm handles its own */

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import { platform } from "@tauri-apps/plugin-os";
 import { type PillSessionType, type SidebarTab } from "./layoutStore";
@@ -69,6 +70,8 @@ export interface TerminalSettings {
 export interface AppearanceSettings {
   sidebarWidth: number;
   pillPanelHeight: number;
+  /** Default panel height in px for newly created pills */
+  defaultPanelHeight: number;
 }
 
 export interface PillsSettings {
@@ -131,10 +134,11 @@ const DEFAULT_TERMINAL: TerminalSettings = {
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   sidebarWidth: 240,
   pillPanelHeight: 70,
+  defaultPanelHeight: 350,
 };
 
 const DEFAULT_PILLS: PillsSettings = {
-  defaultSessions: ["terminal"],
+  defaultSessions: [],
 };
 
 const DEFAULT_SIDEBAR: SidebarSettings = {
@@ -295,7 +299,7 @@ function recompute(global: SettingsData, overrides: SettingsOverrides) {
   };
 }
 
-export const useSettingsStore = create<SettingsStore>()((set, get) => ({
+export const useSettingsStore = create<SettingsStore>()(devtools((set, get) => ({
   _global: { ...DEFAULTS },
   _projectOverrides: {},
   _projectPath: null,
@@ -553,7 +557,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
     const { _projectPath } = get();
     if (_projectPath) scheduleSaveProject(_projectPath, {});
   },
-}));
+}), { name: "settingsStore", enabled: import.meta.env.DEV }));
 
 /* ── Keybind helpers ── */
 

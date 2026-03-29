@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
+import { useShallow } from "zustand/shallow";
 
 export type SidebarTab = "explorer" | "git";
 export type PillMode = "terminal" | "claude" | "github";
@@ -39,6 +41,8 @@ interface LayoutStore {
     expandedPillIds: string[];
     openPanelIds: string[];
     maxPanels: number;
+    /** Per-pill panel height in px. Missing key = use default from settings. */
+    panelHeights: Record<string, number>;
   };
   projects: { projects: Project[]; activeProjectId: string | null };
   settingsOpen: boolean;
@@ -49,8 +53,9 @@ interface LayoutStore {
   toggleSidebar: () => void;
   setActivePillId: (id: string) => void;
   togglePillExpanded: (id: string) => void;
-  togglePanelOpen: () => void;
+  togglePanelOpen: (id?: string) => void;
   setMaxPanels: (max: number) => void;
+  setPanelHeight: (id: string, height: number) => void;
   addPillSession: (type: PillSessionType, projectPath: string) => string;
   removePillSession: (id: string) => void;
   reorderSessions: (projectPath: string, fromIndex: number, toIndex: number) => void;
@@ -98,9 +103,9 @@ function sortSessionsByExpanded(sessions: PillSession[], expandedIds: string[]):
   return result;
 }
 
-export const useLayoutStore = create<LayoutStore>((set) => ({
+export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   sidebar: { activeTab: "explorer", isOpen: true },
-  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1 },
+  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {} },
   projects: { projects: [], activeProjectId: null },
   settingsOpen: false,
   cloneExplorerOpen: false,
@@ -133,9 +138,8 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
           expanded.push(id);
         }
       }
-      // If panels are currently open, sync openPanelIds to match expanded
-      const panelsAreOpen = s.pillBar.openPanelIds.length > 0;
-      const openPanelIds = panelsAreOpen ? [...expanded] : s.pillBar.openPanelIds;
+      // Only remove panels for pills that are no longer expanded
+      const openPanelIds = s.pillBar.openPanelIds.filter((pid) => expanded.includes(pid));
       const sessions = sortSessionsByExpanded(s.pillBar.sessions, expanded);
       return { pillBar: { ...s.pillBar, sessions, activePillId: id, expandedPillIds: expanded, openPanelIds } };
     }),
@@ -145,8 +149,6 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
       const pb = s.pillBar;
       const isExpanded = pb.expandedPillIds.includes(id);
       if (isExpanded) {
-        // Don't collapse the last one
-        if (pb.expandedPillIds.length <= 1) return s;
         const expandedPillIds = pb.expandedPillIds.filter((pid) => pid !== id);
         const openPanelIds = pb.openPanelIds.filter((pid) => pid !== id);
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
@@ -170,18 +172,25 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
           openPanelIds = openPanelIds.filter((pid) => pid !== farthestId);
           expandedPillIds.push(id);
         }
-        if (openPanelIds.length > 0) {
-          openPanelIds = [...expandedPillIds];
-        }
+        // Only keep open panels that are still expanded
+        openPanelIds = openPanelIds.filter((pid) => expandedPillIds.includes(pid));
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
         return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds } };
       }
     }),
 
-  togglePanelOpen: () =>
+  togglePanelOpen: (id) =>
     set((s) => {
       const pb = s.pillBar;
-      // If any panels are open, close all. Otherwise open all expanded pills.
+      if (id) {
+        // Toggle a single pill's panel independently
+        const isOpen = pb.openPanelIds.includes(id);
+        const openPanelIds = isOpen
+          ? pb.openPanelIds.filter((pid) => pid !== id)
+          : [...pb.openPanelIds, id];
+        return { pillBar: { ...pb, openPanelIds } };
+      }
+      // No id: toggle all expanded panels
       const anyOpen = pb.openPanelIds.length > 0;
       const openPanelIds = anyOpen ? [] : [...pb.expandedPillIds];
       return { pillBar: { ...pb, openPanelIds } };
@@ -207,6 +216,11 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
       }
       return { pillBar: { ...pb, maxPanels: max, expandedPillIds: expanded, openPanelIds: openPanels } };
     }),
+
+  setPanelHeight: (id, height) =>
+    set((s) => ({
+      pillBar: { ...s.pillBar, panelHeights: { ...s.pillBar.panelHeights, [id]: height } },
+    })),
 
   addPillSession: (type, projectPath) => {
     const id = genSessionId();
@@ -240,17 +254,13 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
         activePillId = sameProject[0]?.id ?? sessions[0]?.id ?? null;
       }
       let expandedPillIds = s.pillBar.expandedPillIds.filter((pid) => pid !== id);
-      let openPanelIds = s.pillBar.openPanelIds.filter((pid) => pid !== id);
-      const hadPanelsOpen = s.pillBar.openPanelIds.length > 0;
+      const openPanelIds = s.pillBar.openPanelIds.filter((pid) => pid !== id);
       // Ensure at least 1 expanded if sessions remain
       if (expandedPillIds.length === 0 && activePillId) {
         expandedPillIds = [activePillId];
       }
-      // Keep panels open if they were open before
-      if (hadPanelsOpen) {
-        openPanelIds = [...expandedPillIds];
-      }
-      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds } };
+      const { [id]: _, ...panelHeights } = s.pillBar.panelHeights;
+      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds, panelHeights } };
     }),
 
   reorderSessions: (projectPath, fromIndex, toIndex) =>
@@ -341,7 +351,49 @@ export const useLayoutStore = create<LayoutStore>((set) => ({
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setCloneExplorerOpen: (open) => set({ cloneExplorerOpen: open }),
   setCreateBranchOpen: (open) => set({ createBranchOpen: open }),
-}));
+}), { name: "layoutStore", enabled: import.meta.env.DEV }));
+
+/* ── Custom selector hooks ── */
+
+/** Select layout actions (stable references). */
+export function useLayoutActions() {
+  return useLayoutStore(
+    useShallow((s) => ({
+      setSidebarTab: s.setSidebarTab,
+      toggleSidebar: s.toggleSidebar,
+      setActivePillId: s.setActivePillId,
+      togglePillExpanded: s.togglePillExpanded,
+      togglePanelOpen: s.togglePanelOpen,
+      setMaxPanels: s.setMaxPanels,
+      setPanelHeight: s.setPanelHeight,
+      addPillSession: s.addPillSession,
+      removePillSession: s.removePillSession,
+      reorderSessions: s.reorderSessions,
+      setActiveProject: s.setActiveProject,
+      addProject: s.addProject,
+      removeProject: s.removeProject,
+      reorderProjects: s.reorderProjects,
+      updateProjectIcon: s.updateProjectIcon,
+      setSettingsOpen: s.setSettingsOpen,
+      setCloneExplorerOpen: s.setCloneExplorerOpen,
+      setCreateBranchOpen: s.setCreateBranchOpen,
+    }))
+  );
+}
+
+/** Select pill bar state with shallow comparison. */
+export function usePillBarState() {
+  return useLayoutStore(
+    useShallow((s) => s.pillBar)
+  );
+}
+
+/** Select project list state with shallow comparison. */
+export function useProjectsState() {
+  return useLayoutStore(
+    useShallow((s) => s.projects)
+  );
+}
 
 /** Get the PillMode for the currently active pill */
 export function getActivePillMode(): PillMode {

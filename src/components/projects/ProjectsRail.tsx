@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./ProjectsRail.css";
-import { FolderOpen, GitFork, ExternalLink, XCircle } from "lucide-react";
+import { FolderOpen, GitFork, ExternalLink, XCircle, Plus } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useLayoutStore, type Project } from "../../store/layoutStore";
-import { useEditorStore } from "../../store/editorStore";
+import { useLayoutStore, type Project, type PillSession } from "../../store/layoutStore";
+import { useEditorStore, persistCurrentSessions } from "../../store/editorStore";
 import { useActivityStore, getProjectActivity } from "../../store/activityStore";
+import { useTerminalStore } from "../../store/terminalStore";
+import { useClaudeStore } from "../../store/claudeStore";
+import { useGitHubStore } from "../../store/githubStore";
 import { generateProjectAvatar } from "../../utils/projectAvatar";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
-import { AddSessionButton } from "../pillbar/PillBar";
-import { NotificationBell } from "../notifications/NotificationCenter";
+import { AddSessionButton, cleanupSession } from "../pillbar/PillBar";
+import { PillItem } from "../pillbar/PillItem";
 
 function getProjectGlowClass(activity: { terminal: string; claude: string } | undefined): string {
   if (!activity) return "";
@@ -43,6 +46,24 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const contextMenu = useContextMenu();
   const sessionActivity = useActivityStore((s) => s.sessions);
   const allSessions = useLayoutStore((s) => s.pillBar.sessions);
+  const expandedPillIds = useLayoutStore((s) => s.pillBar.expandedPillIds);
+  const setActivePillId = useLayoutStore((s) => s.setActivePillId);
+  const togglePillExpanded = useLayoutStore((s) => s.togglePillExpanded);
+  const togglePanelOpen = useLayoutStore((s) => s.togglePanelOpen);
+  const removePillSession = useLayoutStore((s) => s.removePillSession);
+  const clearActivityUnread = useActivityStore((s) => s.clearUnread);
+
+  // Collapsed pills for the active project
+  const projectSessions = allSessions.filter((s) => s.projectPath === workspaceRoot);
+  const collapsedSessions = projectSessions.filter((s) => !expandedPillIds.includes(s.id));
+
+  const handleCollapsedPillClick = useCallback((session: PillSession) => {
+    clearActivityUnread(session.id);
+    setActivePillId(session.id);
+    if (session.type === "terminal") useTerminalStore.getState().setActiveKey(session.id);
+    else if (session.type === "claude") useClaudeStore.getState().setActiveKey(session.id);
+    else if (session.type === "github") useGitHubStore.getState().setActiveKey(session.id);
+  }, [setActivePillId, clearActivityUnread]);
 
   /* ── Drag reorder state ── */
   const DRAG_THRESHOLD = 6;
@@ -269,11 +290,20 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     <>
       <aside className="projects-rail" onContextMenu={handleRailContext}>
         <div className="projects-rail__drag-region" onMouseDown={onDrag} onDoubleClick={onDoubleClick} />
-        {workspaceRoot && <AddSessionButton projectPath={workspaceRoot} />}
+        {/* [+P] Add project button (topmost) */}
+        <button
+          className="projects-rail__add-project"
+          onClick={handleOpenFolder}
+          title="Add project"
+          aria-label="Add project"
+        >
+          <Plus size={14} />
+        </button>
+        {/* ── Projects section (grows downward below +P) ── */}
         {projects.map((project, idx) => {
           const isActive = activeProjectId === project.id;
-          const projectSessions = allSessions.filter((s) => s.projectPath === project.path);
-          const activity = getProjectActivity(projectSessions, sessionActivity);
+          const projSessions = allSessions.filter((s) => s.projectPath === project.path);
+          const activity = getProjectActivity(projSessions, sessionActivity);
           const glowClass = isActive ? "" : getProjectGlowClass(activity);
           const isDragging = dragIndex === idx;
           const shiftY = shiftMap[idx] ?? 0;
@@ -307,8 +337,29 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
             </button>
           );
         })}
+
+        {/* ── Spacer (pushes pills to bottom) ── */}
         <div className="projects-rail__spacer" />
-        <NotificationBell />
+
+        {/* ── Collapsed pills (grow upward above +S, nearest to +S first) ── */}
+        {[...collapsedSessions].reverse().map((session) => (
+          <PillItem
+            key={session.id}
+            sessionId={session.id}
+            sessionType={session.type}
+            isExpanded={false}
+            onCollapsedClick={() => handleCollapsedPillClick(session)}
+            onLabelClick={() => togglePanelOpen(session.id)}
+            onCollapse={() => togglePillExpanded(session.id)}
+            onRemove={async () => {
+              removePillSession(session.id);
+              await cleanupSession(session);
+              persistCurrentSessions();
+            }}
+          />
+        ))}
+        {/* [+S] Add session button (bottommost, aligned with pill bar) */}
+        {workspaceRoot && <AddSessionButton projectPath={workspaceRoot} />}
       </aside>
       {contextMenu.menu && (
         <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />

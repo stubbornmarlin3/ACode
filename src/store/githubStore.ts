@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 
 export type GitHubView = "pr-list" | "pr-detail" | "issue-list" | "issue-detail" | "actions-list";
@@ -153,7 +154,7 @@ interface GitHubStore {
   reset: () => void;
 }
 
-export const useGitHubStore = create<GitHubStore>((set, get) => ({
+export const useGitHubStore = create<GitHubStore>()(devtools((set, get) => ({
   isAuthenticated: false,
   authUser: null,
   owner: null,
@@ -218,7 +219,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => ({
       activeKey: null,
       sessions: {},
     }),
-}));
+}), { name: "githubStore", enabled: import.meta.env.DEV }));
 
 /** Selector hook to read the active session's GitHub state */
 export function useActiveGitHubState<T>(selector: (s: GitHubSessionState) => T): T {

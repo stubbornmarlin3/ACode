@@ -11,10 +11,11 @@
   padding: var(--spacing-3);
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: var(--spacing-2);
 }
 
-/* ── Status bar (pinned to bottom) ── */
+/* ── Status bar (pinned to top) ── */
 .claude-chat__status-bar {
   display: flex;
   justify-content: space-between;
@@ -26,7 +27,7 @@
   height: 28px;
   min-height: 28px;
   max-height: 28px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -81,9 +82,9 @@
 
 .claude-chat__model-dropdown {
   position: absolute;
-  bottom: 100%;
+  top: 100%;
   left: 0;
-  margin-bottom: 4px;
+  margin-top: 4px;
   background: var(--bg-elevated, #1e1e2e);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;

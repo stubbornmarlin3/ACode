@@ -7,6 +7,7 @@
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 12, 18, 0.6);
+  position: relative;
 }
 
 .editor-tab-bar {

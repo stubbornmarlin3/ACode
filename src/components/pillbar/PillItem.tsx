@@ -233,93 +233,93 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     }
   };
 
+  const handleTerminalSubmit = async (value: string) => {
+    if (!workspaceRoot) return;
+
+    await ensureTerminalSpawned();
+
+    // Block input until shell is ready (setup complete, __a defined)
+    const currentProj = useTerminalStore.getState().projects[sessionId];
+    if (!currentProj?.shellReady) return;
+
+    // If a command is already running (between markers), send raw stdin input
+    if (currentProj.capturingCommand) {
+      await invoke("write_terminal", { key: sessionId, data: value + "\n" });
+      return;
+    }
+
+    syncTerminalKey();
+    termPushHistory(value);
+    termSetLastCommand(value);
+
+    // Use the __a helper function (defined at shell spawn) which:
+    // 1. Clears the echoed line and re-prints just the command
+    // 2. Emits OSC 7770 start/end markers around the command output
+    const shellName = (useSettingsStore.getState().terminal.shell || "").toLowerCase();
+    if (shellName.includes("cmd")) {
+      await invoke("write_terminal", { key: sessionId, data: value + "\n" });
+    } else {
+      const escaped = value.replace(/'/g, "'\\''");
+      await invoke("write_terminal", { key: sessionId, data: `__a '${escaped}'\n` });
+    }
+  };
+
+  const handleClaudeSubmit = async (value: string) => {
+    const key = sessionId;
+
+    // Handle /clear as a local command
+    if (value === "/clear") {
+      await invoke("kill_claude", { key });
+      useClaudeStore.getState().clearConversation(key);
+      return;
+    }
+
+    try {
+      await ensureClaudeSpawned();
+    } catch (e) {
+      const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
+      useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
+        type: "result",
+        subtype: "error",
+        error: `Failed to start Claude: ${e}`,
+      }) + "\n", gen);
+      return;
+    }
+    syncClaudeKey();
+    claudeAddUserMessage(value);
+    setActivityStatus(sessionId, "running");
+
+    const msg = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: value }],
+      },
+    });
+    try {
+      await invoke("write_claude", { key, data: msg });
+    } catch (e) {
+      const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
+      useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
+        type: "result",
+        subtype: "error",
+        error: `Failed to send message: ${e}`,
+      }) + "\n", gen);
+    }
+  };
+
   const handleSubmit = async () => {
     const input = inputRef.current;
     if (!input || !input.value.trim()) return;
 
-    // Use the full pasted text if it was collapsed
     const value = pastedRef.current ?? input.value.trim();
     pastedRef.current = null;
     input.value = "";
 
     if (isTerminal) {
-      if (!workspaceRoot) return;
-
-      // Ensure persistent shell is running, then write command to it
-      await ensureTerminalSpawned();
-
-      // Block input until shell is ready (setup complete, __a defined)
-      const currentProj = useTerminalStore.getState().projects[sessionId];
-      if (!currentProj?.shellReady) return;
-
-      // If a command is already running (between markers), send raw stdin input
-      const termProj = useTerminalStore.getState().projects[sessionId];
-      if (termProj?.capturingCommand) {
-        await invoke("write_terminal", { key: sessionId, data: value + "\n" });
-        return;
-      }
-
-      syncTerminalKey();
-      termPushHistory(value);
-      termSetLastCommand(value);
-
-      // Use the __a helper function (defined at shell spawn) which:
-      // 1. Clears the echoed line and re-prints just the command
-      // 2. Emits OSC 7770 start/end markers around the command output
-      const shellName = (useSettingsStore.getState().terminal.shell || "").toLowerCase();
-      if (shellName.includes("cmd")) {
-        // cmd.exe — no __a function, fall back to plain command
-        await invoke("write_terminal", { key: sessionId, data: value + "\n" });
-      } else {
-        // POSIX shells + PowerShell — use __a helper
-        const escaped = value.replace(/'/g, "'\\''");
-        await invoke("write_terminal", { key: sessionId, data: `__a '${escaped}'\n` });
-      }
+      await handleTerminalSubmit(value);
     } else if (isClaude) {
-      const key = sessionId;
-
-      // Handle /clear as a local command
-      if (value === "/clear") {
-        await invoke("kill_claude", { key });
-        useClaudeStore.getState().clearConversation(key);
-        return;
-      }
-
-      try {
-        await ensureClaudeSpawned();
-      } catch (e) {
-        // Surface spawn errors so user sees something instead of silent failure
-        const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
-        useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
-          type: "result",
-          subtype: "error",
-          error: `Failed to start Claude: ${e}`,
-        }) + "\n", gen);
-        return;
-      }
-      syncClaudeKey();
-      claudeAddUserMessage(value);
-      setActivityStatus(sessionId, "running");
-
-      // Send as stream-json user message
-      const msg = JSON.stringify({
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: value }],
-        },
-      });
-      try {
-        await invoke("write_claude", { key, data: msg });
-      } catch (e) {
-        // Show write errors (e.g., Claude process died)
-        const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
-        useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
-          type: "result",
-          subtype: "error",
-          error: `Failed to send message: ${e}`,
-        }) + "\n", gen);
-      }
+      await handleClaudeSubmit(value);
     }
   };
 

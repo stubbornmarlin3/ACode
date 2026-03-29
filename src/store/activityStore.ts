@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 
 export type ActivityStatus = "idle" | "running" | "unread";
 
@@ -11,7 +12,7 @@ interface ActivityStore {
   getStatus: (sessionId: string) => ActivityStatus;
 }
 
-export const useActivityStore = create<ActivityStore>((set, get) => ({
+export const useActivityStore = create<ActivityStore>()(devtools((set, get) => ({
   sessions: {},
 
   setStatus: (sessionId, status) => {
@@ -68,7 +69,7 @@ export const useActivityStore = create<ActivityStore>((set, get) => ({
   getStatus: (sessionId) => {
     return get().sessions[sessionId] ?? "idle";
   },
-}));
+}), { name: "activityStore", enabled: import.meta.env.DEV }));
 
 /**
  * Aggregate activity across all sessions for a project.

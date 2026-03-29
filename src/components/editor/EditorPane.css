@@ -2,12 +2,16 @@
   flex: 1;
   overflow: hidden;
   height: 100%;
+  position: relative;
 }
 
-.editor-pane--empty {
+.editor-pane__empty-overlay {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 1;
 }
 
 .editor-pane__placeholder {

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Copy, ClipboardPaste, Trash2 } from "lucide-react";
 import { useTerminalStore, useTerminalStateForKey } from "../../store/terminalStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
-import { invoke } from "@tauri-apps/api/core";
+import { tauriInvoke, tauriInvokeQuiet } from "../../services/tauri";
 import { platform } from "@tauri-apps/plugin-os";
 import { clipboardWrite, clipboardRead } from "../../utils/clipboard";
 import "@xterm/xterm/css/xterm.css";
@@ -44,7 +45,7 @@ export function Terminal() {
     const key = getKey();
     const proj = key ? useTerminalStore.getState().projects[key] : null;
     if (!key || !proj?.isSpawned) return;
-    invoke("resize_terminal", { key, rows: xterm.rows, cols: xterm.cols }).catch(() => {});
+    tauriInvokeQuiet("resize_terminal", { key, rows: xterm.rows, cols: xterm.cols });
   }, [getKey]);
 
   // Auto-spawn shell when component mounts or project switches with no shell running
@@ -54,12 +55,12 @@ export function Terminal() {
     const proj = useTerminalStore.getState().projects[key];
     if (proj?.isSpawned) return;
     const sh = useSettingsStore.getState().terminal.shell || undefined;
-    invoke("spawn_terminal", { key, cwd: workspaceRoot, shell: sh })
+    tauriInvoke("spawn_terminal", { key, cwd: workspaceRoot, shell: sh })
       .then(() => useTerminalStore.getState().setSpawned(key, true))
-      .catch(() => {});
+      .catch((err) => console.error("[terminal] Failed to spawn shell:", err));
   }, [workspaceRoot, getKey]);
 
-  // Create xterm instance and manage all buffer writes (deltas + project switches)
+  // Effect 1: Create xterm instance, load addons, set up key handler
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -103,6 +104,15 @@ export function Terminal() {
     xterm.loadAddon(fitAddon);
     xterm.open(containerRef.current);
 
+    // WebGL renderer with automatic fallback to canvas on context loss
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      xterm.loadAddon(webgl);
+    } catch {
+      // WebGL not available — canvas renderer remains active
+    }
+
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
     xterm.write("\x1b[?25l");
@@ -119,7 +129,19 @@ export function Terminal() {
       return true;
     });
 
-    // Restore buffer for the current project (handles initial mount + settings change recreation)
+    return () => {
+      xterm.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [terminalSettings, sessionKey]);
+
+  // Effect 2: Subscribe to store changes — handle buffer deltas and project switches
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    if (!xterm) return;
+
+    // Restore buffer for the current project
     const initialKey = sessionKey ?? useTerminalStore.getState().activeKey;
     if (initialKey) {
       const buf = useTerminalStore.getState().projects[initialKey]?.outputBuffer ?? "";
@@ -129,13 +151,9 @@ export function Terminal() {
       writtenLengthRef.current = 0;
     }
 
-    // Track which key we're currently rendering
     let trackedKey = initialKey;
 
-    // Subscribe to store changes — handles both deltas and project switches
     const unsub = useTerminalStore.subscribe((state) => {
-      // When bound to a specific session, always use that key
-      // When not bound, follow the global activeKey
       const key = sessionKey ?? state.activeKey;
 
       // Active project cleared
@@ -149,19 +167,18 @@ export function Terminal() {
 
       const buf = state.projects[key]?.outputBuffer ?? "";
 
-      // Project switched (only happens when not bound to a specific session)
+      // Project switched
       if (key !== trackedKey) {
         xterm.reset();
         xterm.write("\x1b[?25l");
         if (buf) xterm.write(buf);
         writtenLengthRef.current = buf.length;
         trackedKey = key;
-        // Sync resize for the new project's PTY
         requestAnimationFrame(() => syncResize());
         return;
       }
 
-      // Buffer was cleared (e.g. setup noise cleared on ready marker)
+      // Buffer was cleared
       if (buf.length < writtenLengthRef.current) {
         xterm.reset();
         xterm.write("\x1b[?25l");
@@ -170,7 +187,7 @@ export function Terminal() {
         return;
       }
 
-      // Same project — write only the delta (new content appended since last write)
+      // Same project — write only the delta
       if (buf.length > writtenLengthRef.current) {
         const delta = buf.slice(writtenLengthRef.current);
         xterm.write(delta);
@@ -178,23 +195,31 @@ export function Terminal() {
       }
     });
 
+    return () => unsub();
+  }, [syncResize, terminalSettings, sessionKey]);
+
+  // Effect 3: Fit terminal and observe resize with debouncing
+  useEffect(() => {
+    if (!containerRef.current || !fitAddonRef.current) return;
+
     requestAnimationFrame(() => {
       fitTerminal();
       syncResize();
     });
 
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const observer = new ResizeObserver(() => {
-      fitTerminal();
-      syncResize();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        fitTerminal();
+        syncResize();
+      }, 80);
     });
     observer.observe(containerRef.current);
 
     return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
       observer.disconnect();
-      unsub();
-      xterm.dispose();
-      xtermRef.current = null;
-      fitAddonRef.current = null;
     };
   }, [fitTerminal, syncResize, terminalSettings, sessionKey]);
 
@@ -224,7 +249,7 @@ export function Terminal() {
             const text = await clipboardRead();
             if (text) {
               const key = getKey();
-              if (key) invoke("write_terminal", { key, data: text }).catch(() => {});
+              if (key) tauriInvokeQuiet("write_terminal", { key, data: text });
             }
           },
         },

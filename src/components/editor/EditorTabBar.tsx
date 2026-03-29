@@ -2,16 +2,14 @@ import { useCallback, useRef, useState } from "react";
 import { X, Copy, ExternalLink, Terminal as TerminalIcon, XCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { clipboardWrite } from "../../utils/clipboard";
-import { useEditorStore } from "../../store/editorStore";
+import { getFileIcon } from "../../utils/fileIcons";
+import { useEditorTabBarState, useEditorActions } from "../../store/editorStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorTabBar.css";
 
 export function EditorTabBar() {
-  const openFiles = useEditorStore((s) => s.openFiles);
-  const activeFilePath = useEditorStore((s) => s.activeFilePath);
-  const setActiveFile = useEditorStore((s) => s.setActiveFile);
-  const closeFile = useEditorStore((s) => s.closeFile);
-  const reorderOpenFiles = useEditorStore((s) => s.reorderOpenFiles);
+  const { openFiles, activeFilePath } = useEditorTabBarState();
+  const { setActiveFile, closeFile, reorderOpenFiles } = useEditorActions();
   const contextMenu = useContextMenu();
 
   /* ── Drag reorder state ── */
@@ -214,6 +212,7 @@ export function EditorTabBar() {
             >
               <span className="editor-tab-bar__tab-name">
                 {file.isDirty && <span className="editor-tab-bar__dot" />}
+                {getFileIcon(file.name, 13)}
                 {file.name}
               </span>
               <span

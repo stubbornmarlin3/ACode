@@ -2,7 +2,7 @@ mod git;
 mod mcp;
 
 use base64::Engine;
-use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+use notify_debouncer_mini::{new_debouncer_opt, DebouncedEventKind};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -1009,8 +1009,9 @@ fn interrupt_claude(
         // fresh one on the next message.
         #[cfg(unix)]
         {
-            let pid = ci.child.id() as i32;
-            unsafe { libc::kill(pid, libc::SIGINT); }
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            let _ = kill(Pid::from_raw(ci.child.id() as i32), Signal::SIGINT);
         }
         #[cfg(windows)]
         {
@@ -1150,8 +1151,14 @@ async fn watch_directory(
         *handle = None;
 
         let watch_path = PathBuf::from(&path);
-        let mut debouncer = new_debouncer(
-            Duration::from_millis(500),
+        let config = notify_debouncer_mini::Config::default()
+            .with_timeout(Duration::from_millis(200))
+            .with_notify_config(
+                notify::Config::default()
+                    .with_poll_interval(Duration::from_millis(200))
+            );
+        let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher>(
+            config,
             move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>| {
                 if let Ok(events) = res {
                     let paths: Vec<String> = events

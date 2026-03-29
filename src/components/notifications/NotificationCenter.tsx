@@ -83,7 +83,7 @@ interface NotificationCenterPanelProps {
   onClose: () => void;
 }
 
-function NotificationCenterPanel({ anchorRect, onClose }: NotificationCenterPanelProps) {
+export function NotificationCenterPanel({ anchorRect, onClose }: NotificationCenterPanelProps) {
   const notifications = useNotificationStore((s) => s.notifications);
   const clearAll = useNotificationStore((s) => s.clearAll);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -118,7 +118,7 @@ function NotificationCenterPanel({ anchorRect, onClose }: NotificationCenterPane
       // Ensure the panel is open — if panels are closed, toggle them open
       const updated = useLayoutStore.getState();
       if (!updated.pillBar.openPanelIds.includes(session.id)) {
-        layout.togglePanelOpen();
+        layout.togglePanelOpen(session.id);
       }
     }
     useNotificationStore.getState().markRead(n.id);

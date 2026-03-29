@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Terminal as TerminalIcon, Github, XCircle, FolderOpen, GitFork } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { tauriInvoke, tauriInvokeQuiet } from "../../services/tauri";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { useLayoutStore, genSessionId, maxPanelsForWidth, type PillSession, type PillSessionType } from "../../store/layoutStore";
 import { useGitStore } from "../../store/gitStore";
@@ -182,9 +182,9 @@ function useTerminalEvents() {
         const workspaceRoot = useEditorStore.getState().workspaceRoot;
         if (workspaceRoot) {
           const shell = useSettingsStore.getState().terminal.shell || undefined;
-          invoke("spawn_terminal", { key, cwd: workspaceRoot, shell })
+          tauriInvoke("spawn_terminal", { key, cwd: workspaceRoot, shell })
             .then(() => useTerminalStore.getState().setSpawned(key, true))
-            .catch(() => {});
+            .catch((err) => console.error("[pillbar] Failed to respawn terminal:", err));
         }
       }
     }).then((u) => unlisteners.push(u));
@@ -238,12 +238,12 @@ function useClaudeEvents() {
 }
 
 /** Clean up resources when closing a session */
-async function cleanupSession(session: PillSession) {
+export async function cleanupSession(session: PillSession) {
   if (session.type === "terminal") {
     const termState = useTerminalStore.getState();
     const proj = termState.projects[session.id];
     if (proj?.isSpawned) {
-      await invoke("kill_terminal", { key: session.id }).catch(() => {});
+      await tauriInvokeQuiet("kill_terminal", { key: session.id });
     }
     // Remove from store
     const { projects, ...rest } = useTerminalStore.getState();
@@ -253,7 +253,7 @@ async function cleanupSession(session: PillSession) {
     const claudeState = useClaudeStore.getState();
     const proj = claudeState.projects[session.id];
     if (proj?.isSpawned) {
-      await invoke("kill_claude", { key: session.id }).catch(() => {});
+      await tauriInvokeQuiet("kill_claude", { key: session.id });
     }
     // Remove from store
     const { projects, ...rest } = useClaudeStore.getState();
@@ -294,7 +294,7 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
   }, [open]);
 
   useEffect(() => {
-    invoke<boolean>("check_claude_available").then(setClaudeAvailable);
+    tauriInvoke<boolean>("check_claude_available").then(setClaudeAvailable);
   }, []);
 
   const handleToggle = () => {
@@ -328,7 +328,7 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
     const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
     const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
     const parentDir = ws && lastSep > 0 ? ws.substring(0, lastSep) : null;
-    const selected = await invoke<string | null>("pick_folder", { defaultPath: parentDir });
+    const selected = await tauriInvoke<string | null>("pick_folder", { defaultPath: parentDir });
     if (!selected) return;
     const existing = projects.find((p) => p.path === selected);
     if (existing) {
@@ -496,8 +496,8 @@ export function PillBar() {
     }
   };
 
-  const handleLabelClick = () => {
-    togglePanelOpen();
+  const handleLabelClick = (sessionId: string) => {
+    togglePanelOpen(sessionId);
   };
 
   // ── Context menu ──
@@ -684,17 +684,27 @@ export function PillBar() {
 
   // Split sessions into expanded (left) and collapsed (right)
   const expandedSessions = projectSessions.filter((s) => pillBar.expandedPillIds.includes(s.id));
-  const collapsedSessions = projectSessions.filter((s) => !pillBar.expandedPillIds.includes(s.id));
+
+  // Collapsed pills now live on the ProjectsRail — if nothing expanded, hide pill bar
+  if (expandedSessions.length === 0) return null;
 
   return (
     <div className="pill-bar" data-pill-state={hasOpenPanels ? "panel-open" : "idle"} ref={pillBarRef}>
       <div className="pill-bar__columns" ref={rowRef}>
-        {expandedSessions.map((session, colIdx) => {
-          const isLastColumn = colIdx === expandedSessions.length - 1;
+        {expandedSessions.map((session) => {
           const origIndex = projectSessions.indexOf(session);
           const [slotClass, slotStyle] = getSlotProps(origIndex);
           return (
             <div key={session.id} className="pill-bar__column">
+              {/* Panel for this column — renders above pills */}
+              {pillBar.openPanelIds.includes(session.id) && (
+                <div
+                  className={dragFromIndex === origIndex ? "pill-bar__panel-drag pill-bar__panel-drag--dragging" : "pill-bar__panel-drag"}
+                  style={slotStyle}
+                >
+                  <PillPanel sessionId={session.id} mode={session.type} />
+                </div>
+              )}
               {/* Pill row for this column */}
               <div className="pill-bar__column-pills">
                 <div
@@ -708,7 +718,7 @@ export function PillBar() {
                     sessionType={session.type}
                     isExpanded={true}
                     onCollapsedClick={() => handlePillClick(session)}
-                    onLabelClick={handleLabelClick}
+                    onLabelClick={() => handleLabelClick(session.id)}
                     onCollapse={() => togglePillExpanded(session.id)}
                     onRemove={async () => {
                       removePillSession(session.id);
@@ -717,75 +727,12 @@ export function PillBar() {
                     }}
                   />
                 </div>
-                {/* Collapsed pills live in the last column's pill row */}
-                {isLastColumn && collapsedSessions.map((cs) => {
-                  const csIndex = projectSessions.indexOf(cs);
-                  const [csClass, csStyle] = getSlotProps(csIndex);
-                  return (
-                    <div
-                      key={cs.id}
-                      className={csClass}
-                      style={csStyle}
-                      onPointerDown={handlePointerDown(csIndex)}
-                      onContextMenu={(e) => handlePillContext(e, cs)}
-                    >
-                      <PillItem
-                        sessionId={cs.id}
-                        sessionType={cs.type}
-                        isExpanded={false}
-                        onCollapsedClick={() => handlePillClick(cs)}
-                        onLabelClick={handleLabelClick}
-                        onCollapse={() => togglePillExpanded(cs.id)}
-                        onRemove={async () => {
-                          removePillSession(cs.id);
-                          await cleanupSession(cs);
-                          persistCurrentSessions();
-                        }}
-                      />
-                    </div>
-                  );
-                })}
+                {/* Collapsed pills now live on the ProjectsRail */}
               </div>
-              {/* Panel for this column — follows pill during drag */}
-              {hasOpenPanels && pillBar.openPanelIds.includes(session.id) && (
-                <div
-                  className={dragFromIndex === origIndex ? "pill-bar__panel-drag pill-bar__panel-drag--dragging" : "pill-bar__panel-drag"}
-                  style={slotStyle}
-                >
-                  <PillPanel sessionId={session.id} mode={session.type} />
-                </div>
-              )}
             </div>
           );
         })}
-        {/* If nothing is expanded, just render collapsed pills in a row */}
-        {expandedSessions.length === 0 && collapsedSessions.map((session) => {
-          const origIndex = projectSessions.indexOf(session);
-          const [slotClass, slotStyle] = getSlotProps(origIndex);
-          return (
-            <div
-              key={session.id}
-              className={slotClass}
-              style={slotStyle}
-              onPointerDown={handlePointerDown(origIndex)}
-              onContextMenu={(e) => handlePillContext(e, session)}
-            >
-              <PillItem
-                sessionId={session.id}
-                sessionType={session.type}
-                isExpanded={false}
-                onCollapsedClick={() => handlePillClick(session)}
-                onLabelClick={handleLabelClick}
-                onCollapse={() => togglePillExpanded(session.id)}
-                onRemove={async () => {
-                  removePillSession(session.id);
-                  await cleanupSession(session);
-                  persistCurrentSessions();
-                }}
-              />
-            </div>
-          );
-        })}
+        {/* Collapsed pills now live on the ProjectsRail */}
       </div>
       {contextMenu.menu && (
         <ContextMenu

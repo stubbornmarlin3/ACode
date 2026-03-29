@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface GitFileChange {
@@ -69,7 +70,7 @@ interface GitStore {
   reset: () => void;
 }
 
-export const useGitStore = create<GitStore>((set, get) => ({
+export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   isRepo: false,
   status: null,
   branches: null,
@@ -198,4 +199,4 @@ export const useGitStore = create<GitStore>((set, get) => ({
       diff: "",
       isLoading: false,
     }),
-}));
+}), { name: "gitStore", enabled: import.meta.env.DEV }));

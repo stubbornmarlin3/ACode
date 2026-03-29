@@ -1,7 +1,7 @@
 .root-layout {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr var(--projects-rail-width);
-  grid-template-areas: "sidebar center projects";
+  grid-template-columns: var(--sidebar-width) auto 1fr var(--projects-rail-width);
+  grid-template-areas: "sidebar resize center projects";
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -10,7 +10,7 @@
 }
 
 .root-layout--sidebar-closed {
-  grid-template-columns: 0px 1fr var(--projects-rail-width);
+  grid-template-columns: 0px 0px 1fr var(--projects-rail-width);
 }
 
 .root-layout--no-project {
@@ -225,6 +225,10 @@
   font-size: 11px;
   color: var(--accent-blue);
   font-weight: 500;
+}
+
+.root-layout > .resize-handle--horizontal {
+  grid-area: resize;
 }
 
 .root-layout__center {
