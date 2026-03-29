@@ -204,14 +204,30 @@ function useClaudeEvents() {
     let cancelled = false;
     const unlisteners: (() => void)[] = [];
 
-    listen<{ key: string; data: string }>("claude-output", (event) => {
+    listen<{ key: string; data: string; generation: number }>("claude-output", (event) => {
       if (cancelled) return;
-      useClaudeStore.getState().processStreamChunk(event.payload.key, event.payload.data);
+      useClaudeStore.getState().processStreamChunk(event.payload.key, event.payload.data, event.payload.generation);
     }).then((u) => unlisteners.push(u));
 
-    listen<{ key: string; code: number | null }>("claude-exit", (event) => {
+    listen<{ key: string; code: number | null; stderr?: string }>("claude-exit", (event) => {
       if (cancelled) return;
-      useClaudeStore.getState().setProjectSpawned(event.payload.key, false);
+      const store = useClaudeStore.getState();
+      const key = event.payload.key;
+      store.setProjectSpawned(key, false);
+      // If the process exited while we were still streaming (e.g. crash after
+      // interrupt + respawn), reset streaming state so the UI doesn't get stuck
+      // on the "thinking" spinner forever.
+      const proj = store.projects[key];
+      if (proj?.isStreaming) {
+        const stderrHint = event.payload.stderr ? `\n${event.payload.stderr}` : "";
+        store.processStreamChunk(key, JSON.stringify({
+          type: "result",
+          subtype: "error",
+          error: event.payload.code != null
+            ? `Claude exited with code ${event.payload.code}${stderrHint}`
+            : `Claude process exited unexpectedly${stderrHint}`,
+        }) + "\n", proj.generation);
+      }
     }).then((u) => unlisteners.push(u));
 
     return () => {

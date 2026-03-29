@@ -213,9 +213,8 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     // Resume previous session if available (preserves conversation after interrupt/crash)
     const resumeSessionId = proj?.lastSessionId || undefined;
     const model = proj?.selectedModel || undefined;
-    const permissionMode = useSettingsStore.getState().claude.permissionMode;
-    await invoke("spawn_claude", { key, cwd: workspaceRoot || "/", mcpConfigPath, sessionId: resumeSessionId, model, permissionMode });
-    useClaudeStore.getState().setProjectSpawned(key, true);
+    const generation = await invoke<number>("spawn_claude", { key, cwd: workspaceRoot || "/", mcpConfigPath, sessionId: resumeSessionId, model });
+    useClaudeStore.getState().setProjectSpawned(key, true, generation);
   };
 
   const PASTE_COLLAPSE_THRESHOLD = 5;
@@ -286,7 +285,18 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
         return;
       }
 
-      await ensureClaudeSpawned();
+      try {
+        await ensureClaudeSpawned();
+      } catch (e) {
+        // Surface spawn errors so user sees something instead of silent failure
+        const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
+        useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
+          type: "result",
+          subtype: "error",
+          error: `Failed to start Claude: ${e}`,
+        }) + "\n", gen);
+        return;
+      }
       syncClaudeKey();
       claudeAddUserMessage(value);
       setActivityStatus(sessionId, "running");
@@ -299,7 +309,17 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
           content: [{ type: "text", text: value }],
         },
       });
-      await invoke("write_claude", { key, data: msg });
+      try {
+        await invoke("write_claude", { key, data: msg });
+      } catch (e) {
+        // Show write errors (e.g., Claude process died)
+        const gen = useClaudeStore.getState().projects[key]?.generation ?? -1;
+        useClaudeStore.getState().processStreamChunk(key, JSON.stringify({
+          type: "result",
+          subtype: "error",
+          error: `Failed to send message: ${e}`,
+        }) + "\n", gen);
+      }
     }
   };
 

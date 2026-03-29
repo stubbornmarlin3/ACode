@@ -4,6 +4,7 @@ import { Copy, RefreshCw } from "lucide-react";
 import { useGitHubStore, useGitHubStateForKey, updateGitHubSessionForKey, type IssueSummary } from "../../store/githubStore";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
+import { clipboardWrite } from "../../utils/clipboard";
 
 export function IssueListView() {
   const sessionKey = usePillSessionId();
@@ -41,8 +42,8 @@ export function IssueListView() {
       const items: MenuEntry[] = [
         { label: "Open", action: () => handleSelect(issue) },
         "separator",
-        { label: "Copy Issue Number", icon: <Copy size={12} />, action: () => navigator.clipboard.writeText(`#${issue.number}`) },
-        { label: "Copy Title", icon: <Copy size={12} />, action: () => navigator.clipboard.writeText(issue.title) },
+        { label: "Copy Issue Number", icon: <Copy size={12} />, action: () => clipboardWrite(`#${issue.number}`) },
+        { label: "Copy Title", icon: <Copy size={12} />, action: () => clipboardWrite(issue.title) },
       ];
       contextMenu.show(e, items);
     },

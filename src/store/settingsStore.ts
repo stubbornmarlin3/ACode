@@ -28,22 +28,25 @@ export interface Keybind {
   keys: string;
 }
 
+const _isMac = platform() === "macos";
+const _mod = _isMac ? "Cmd" : "Ctrl";
+
 const DEFAULT_KEYBINDS: Keybind[] = [
-  { action: "save", label: "Save File", keys: "Ctrl+S" },
-  { action: "find", label: "Find", keys: "Ctrl+F" },
-  { action: "undo", label: "Undo", keys: "Ctrl+Z" },
-  { action: "redo", label: "Redo", keys: "Ctrl+Y" },
-  { action: "cut", label: "Cut", keys: "Ctrl+X" },
-  { action: "copy", label: "Copy", keys: "Ctrl+C" },
-  { action: "paste", label: "Paste", keys: "Ctrl+V" },
-  { action: "toggleSidebar", label: "Toggle Sidebar", keys: "Ctrl+B" },
-  { action: "newFile", label: "New File", keys: "Ctrl+N" },
-  { action: "closeTab", label: "Close Tab", keys: "Ctrl+W" },
+  { action: "save", label: "Save File", keys: `${_mod}+S` },
+  { action: "find", label: "Find", keys: `${_mod}+F` },
+  { action: "undo", label: "Undo", keys: `${_mod}+Z` },
+  { action: "redo", label: "Redo", keys: _isMac ? "Cmd+Shift+Z" : "Ctrl+Y" },
+  { action: "cut", label: "Cut", keys: `${_mod}+X` },
+  { action: "copy", label: "Copy", keys: `${_mod}+C` },
+  { action: "paste", label: "Paste", keys: `${_mod}+V` },
+  { action: "toggleSidebar", label: "Toggle Sidebar", keys: `${_mod}+B` },
+  { action: "newFile", label: "New File", keys: `${_mod}+N` },
+  { action: "closeTab", label: "Close Tab", keys: `${_mod}+W` },
   { action: "nextTab", label: "Next Tab", keys: "Ctrl+Tab" },
   { action: "prevTab", label: "Previous Tab", keys: "Ctrl+Shift+Tab" },
-  { action: "toggleTerminal", label: "Toggle Terminal", keys: "Ctrl+`" },
-  { action: "toggleClaude", label: "Toggle Claude", keys: "Ctrl+Shift+C" },
-  { action: "commandPalette", label: "Command Palette", keys: "Ctrl+Shift+P" },
+  { action: "toggleTerminal", label: "Toggle Terminal", keys: `${_mod}+\`` },
+  { action: "toggleClaude", label: "Toggle Claude", keys: `${_mod}+Shift+C` },
+  { action: "commandPalette", label: "Command Palette", keys: `${_mod}+Shift+P` },
 ];
 
 /* ── Settings types ── */
@@ -78,10 +81,7 @@ export interface SidebarSettings {
 }
 
 export interface ClaudeSettings {
-  /** "auto" = bypassPermissions (Claude auto-approves everything, including questions).
-   *  "smart" = auto-approve tool use (edits, bash) but pause for questions and plan approval.
-   *  "interactive" = pause for all tool use, questions, and plan approval. */
-  permissionMode: "auto" | "smart" | "interactive";
+  // placeholder — kept so SettingsData shape doesn't change; add future claude settings here
 }
 
 /** Full settings data — every field has a value */
@@ -142,9 +142,7 @@ const DEFAULT_SIDEBAR: SidebarSettings = {
   tabOrderPerProject: false,
 };
 
-const DEFAULT_CLAUDE: ClaudeSettings = {
-  permissionMode: "smart",
-};
+const DEFAULT_CLAUDE: ClaudeSettings = {};
 
 export const DEFAULTS: SettingsData = {
   keybinds: DEFAULT_KEYBINDS,
@@ -561,6 +559,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 
 export function parseKeybind(keys: string): {
   ctrl: boolean;
+  meta: boolean;
   shift: boolean;
   alt: boolean;
   key: string;
@@ -568,6 +567,7 @@ export function parseKeybind(keys: string): {
   const parts = keys.split("+");
   return {
     ctrl: parts.includes("Ctrl"),
+    meta: parts.includes("Cmd"),
     shift: parts.includes("Shift"),
     alt: parts.includes("Alt"),
     key: parts[parts.length - 1].toLowerCase(),
@@ -578,6 +578,7 @@ export function matchesKeybind(e: KeyboardEvent, keys: string): boolean {
   const parsed = parseKeybind(keys);
   return (
     e.ctrlKey === parsed.ctrl &&
+    e.metaKey === parsed.meta &&
     e.shiftKey === parsed.shift &&
     e.altKey === parsed.alt &&
     e.key.toLowerCase() === parsed.key

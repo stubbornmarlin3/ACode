@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { clipboardWrite } from "../../utils/clipboard";
 import {
   useClaudeStore,
   useClaudeStateForKey,
@@ -95,9 +96,11 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+    clipboardWrite(text).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }
     });
   }, [text]);
 
@@ -687,86 +690,7 @@ function InteractionCard({
     return null;
   }
 
-  // ── File edit/write — show file path + diff + approve/deny ──
-  if (interaction.category === "edit") {
-    const filePath = interaction.input.file_path as string | undefined;
-    const oldStr = interaction.input.old_string as string | undefined;
-    const newStr = interaction.input.new_string as string | undefined;
-    const content = interaction.input.content as string | undefined;
-
-    return (
-      <div className="claude-chat__interaction claude-chat__interaction--edit">
-        <div className="claude-chat__interaction-header">
-          <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
-          {filePath && <span className="claude-chat__interaction-file">{filePath}</span>}
-        </div>
-        {oldStr && newStr && (
-          <DiffBlock oldStr={oldStr} newStr={newStr} filePath={filePath} />
-        )}
-        {content && !oldStr && (
-          <div className="claude-chat__code-block">
-            <pre><code>{content.length > 500 ? content.slice(0, 500) + "\n..." : content}</code></pre>
-          </div>
-        )}
-        <div className="claude-chat__interaction-actions">
-          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
-            Approve
-          </button>
-          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
-            Deny
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Bash/command — show command + approve/deny ──
-  if (interaction.category === "bash") {
-    const command = interaction.input.command as string | undefined;
-    return (
-      <div className="claude-chat__interaction claude-chat__interaction--bash">
-        <div className="claude-chat__interaction-header">
-          <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
-        </div>
-        {command && (
-          <pre className="claude-chat__interaction-command">{command}</pre>
-        )}
-        <div className="claude-chat__interaction-actions">
-          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
-            Approve
-          </button>
-          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
-            Deny
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Generic tool — show tool name + input summary + approve/deny ──
-  const summary = Object.entries(interaction.input)
-    .map(([k, v]) => {
-      const val = typeof v === "string" ? v : JSON.stringify(v);
-      return `${k}: ${val.length > 60 ? val.slice(0, 60) + "..." : val}`;
-    })
-    .join("\n");
-
-  return (
-    <div className="claude-chat__interaction claude-chat__interaction--generic">
-      <div className="claude-chat__interaction-header">
-        <span className="claude-chat__interaction-tool">{interaction.toolName}</span>
-      </div>
-      {summary && <pre className="claude-chat__interaction-summary">{summary}</pre>}
-      <div className="claude-chat__interaction-actions">
-        <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
-          Approve
-        </button>
-        <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
-          Deny
-        </button>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 // ── Main chat component ─────────────────────────────────────────────

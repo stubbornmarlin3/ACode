@@ -15,6 +15,8 @@ import {
   Terminal,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { platform } from "@tauri-apps/plugin-os";
+import { clipboardWrite } from "../../utils/clipboard";
 import { useEditorStore, FileEntry } from "../../store/editorStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./FileExplorer.css";
@@ -127,12 +129,12 @@ function FileTreeItem({
       items.push({
         label: "Copy Name",
         icon: <Copy size={12} />,
-        action: () => navigator.clipboard.writeText(entry.name),
+        action: () => clipboardWrite(entry.name),
       });
       items.push({
         label: "Copy Path",
         icon: <Copy size={12} />,
-        action: () => navigator.clipboard.writeText(entry.path),
+        action: () => clipboardWrite(entry.path),
       });
 
       items.push("separator");
@@ -297,7 +299,7 @@ export function FileExplorer() {
         {
           label: "Paste",
           icon: <ClipboardPaste size={12} />,
-          shortcut: "Ctrl+V",
+          shortcut: platform() === "macos" ? "Cmd+V" : "Ctrl+V",
           action: async () => {
             // Paste is a placeholder — clipboard file paste requires native support
           },

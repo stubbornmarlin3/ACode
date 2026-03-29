@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { X, Copy, ExternalLink, Terminal as TerminalIcon, XCircle } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { clipboardWrite } from "../../utils/clipboard";
 import { useEditorStore } from "../../store/editorStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorTabBar.css";
@@ -157,12 +158,12 @@ export function EditorTabBar() {
         {
           label: "Copy Name",
           icon: <Copy size={12} />,
-          action: () => navigator.clipboard.writeText(file.name),
+          action: () => clipboardWrite(file.name),
         },
         {
           label: "Copy Path",
           icon: <Copy size={12} />,
-          action: () => navigator.clipboard.writeText(filePath),
+          action: () => clipboardWrite(filePath),
         },
         "separator",
         {

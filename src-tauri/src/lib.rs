@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{Read as IoRead, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
 
@@ -660,6 +661,9 @@ struct ClaudeInstance {
     child: std::process::Child,
 }
 
+/// Monotonically increasing counter to tag each spawn so stale output is ignored.
+static CLAUDE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 pub struct ClaudeState {
     instances: Mutex<HashMap<String, ClaudeInstance>>,
 }
@@ -676,12 +680,14 @@ impl Default for ClaudeState {
 struct ClaudeOutput {
     key: String,
     data: String,
+    generation: u64,
 }
 
 #[derive(Serialize, Clone)]
 struct ClaudeExit {
     key: String,
     code: Option<i32>,
+    stderr: Option<String>,
 }
 
 #[tauri::command]
@@ -691,16 +697,18 @@ fn spawn_claude(
     mcp_config_path: Option<String>,
     session_id: Option<String>,
     model: Option<String>,
-    permission_mode: Option<String>,
     state: State<'_, Arc<ClaudeState>>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let mut instances = state.instances.lock().unwrap();
     if instances.contains_key(&key) {
-        return Ok(()); // Already running for this project
+        // Return the current generation for the already-running instance
+        return Ok(CLAUDE_GENERATION.load(Ordering::SeqCst).saturating_sub(1));
     }
 
-    let mut cmd = std::process::Command::new("claude");
+    let claude_bin = resolve_claude_binary()
+        .ok_or_else(|| "Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code".to_string())?;
+    let mut cmd = std::process::Command::new(&claude_bin);
     cmd.args([
             "-p",
             "--input-format", "stream-json",
@@ -708,14 +716,21 @@ fn spawn_claude(
             "--verbose",
         ]);
 
-    // Only bypass permissions in "auto" mode — "smart" and "interactive" let the app handle approvals
-    if permission_mode.as_deref() == Some("auto") || permission_mode.is_none() {
-        cmd.args(["--permission-mode", "bypassPermissions"]);
-    }
+    // Always bypass CLI-level permissions — stdin is piped so the CLI can't
+    // prompt on a TTY.  The app intercepts questions & plan approval in the UI.
+    cmd.args(["--permission-mode", "bypassPermissions"]);
 
-    // Resume a previous conversation if session ID provided
+    // Resume a previous conversation if session ID provided.
+    // Clean up any stale lock file first — SIGINT in -p mode kills the
+    // process without releasing the lock at ~/.claude/tasks/<sid>/.lock.
     if let Some(ref sid) = session_id {
-        cmd.args(["--session-id", sid]);
+        if let Some(home) = dirs::home_dir() {
+            let lock_path = home.join(".claude").join("tasks").join(sid).join(".lock");
+            if lock_path.exists() {
+                let _ = std::fs::remove_file(&lock_path);
+            }
+        }
+        cmd.args(["--resume", sid]);
     }
 
     // Override model if specified
@@ -743,10 +758,12 @@ fn spawn_claude(
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn claude: {}", e))?;
 
+    let generation = CLAUDE_GENERATION.fetch_add(1, Ordering::SeqCst);
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    // Stream stdout → claude-output events (keyed)
+    // Stream stdout → claude-output events (keyed + tagged with generation)
     if let Some(mut out) = stdout {
         let app_h = app.clone();
         let k = key.clone();
@@ -757,21 +774,32 @@ fn spawn_claude(
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                        let _ = app_h.emit("claude-output", ClaudeOutput { key: k.clone(), data });
+                        let _ = app_h.emit("claude-output", ClaudeOutput { key: k.clone(), data, generation });
                     }
                 }
             }
         });
     }
 
-    // Drain stderr silently
+    // Capture stderr into a shared buffer for error reporting on exit
+    let stderr_buf: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
     if let Some(mut err) = stderr {
+        let buf_clone = stderr_buf.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
                 match IoRead::read(&mut err, &mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+                    Ok(n) => {
+                        if let Ok(mut s) = buf_clone.lock() {
+                            // Keep only last 1KB to avoid unbounded growth
+                            s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                            if s.len() > 1024 {
+                                let start = s.len() - 1024;
+                                *s = s[start..].to_string();
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -799,13 +827,17 @@ fn spawn_claude(
                 match ci.child.try_wait() {
                     Ok(Some(status)) => {
                         let code = status.code();
-                        let _ = app_h.emit("claude-exit", ClaudeExit { key: k.clone(), code });
+                        let stderr = stderr_buf.lock().ok()
+                            .and_then(|s| if s.is_empty() { None } else { Some(s.trim().to_string()) });
+                        let _ = app_h.emit("claude-exit", ClaudeExit { key: k.clone(), code, stderr });
                         insts.remove(&k);
                         break;
                     }
                     Ok(None) => {} // Still running
                     Err(_) => {
-                        let _ = app_h.emit("claude-exit", ClaudeExit { key: k.clone(), code: None });
+                        let stderr = stderr_buf.lock().ok()
+                            .and_then(|s| if s.is_empty() { None } else { Some(s.trim().to_string()) });
+                        let _ = app_h.emit("claude-exit", ClaudeExit { key: k.clone(), code: None, stderr });
                         insts.remove(&k);
                         break;
                     }
@@ -816,7 +848,7 @@ fn spawn_claude(
         }
     });
 
-    Ok(())
+    Ok(generation)
 }
 
 #[tauri::command]
@@ -847,7 +879,10 @@ fn interrupt_claude(
     state: State<'_, Arc<ClaudeState>>,
 ) -> Result<(), String> {
     let mut instances = state.instances.lock().unwrap();
-    if let Some(ci) = instances.get_mut(&key) {
+    if let Some(ci) = instances.remove(&key) {
+        // Send SIGINT to abort the current turn. In -p mode this causes the
+        // CLI to exit. We remove the instance so spawn_claude can create a
+        // fresh one on the next message.
         #[cfg(unix)]
         {
             let pid = ci.child.id() as i32;
@@ -855,9 +890,9 @@ fn interrupt_claude(
         }
         #[cfg(windows)]
         {
-            // No clean SIGINT on Windows — kill the process
             let _ = ci.child.kill();
         }
+        // ci is dropped here — stdin closes, process can exit
         Ok(())
     } else {
         Err("Claude is not running for this project".into())
@@ -876,32 +911,83 @@ fn kill_claude(
     Ok(())
 }
 
-// ── Claude CLI availability check ────────────────────────────────────
+// ── Claude CLI resolution & availability check ──────────────────────
+
+/// Resolve the full path to the `claude` CLI binary.
+/// When launched from Finder/Dock on macOS, the app inherits a minimal PATH
+/// that often doesn't include ~/.claude/local, Homebrew, or npm global bins.
+/// This function first tries the PATH, then probes well-known install locations.
+fn resolve_claude_binary() -> Option<String> {
+    // 1. Try PATH (works in dev / terminal launches)
+    #[cfg(target_os = "windows")]
+    let which_result = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("where")
+            .arg("claude")
+            .creation_flags(0x08000000)
+            .output()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let which_result = std::process::Command::new("which")
+        .arg("claude")
+        .output();
+
+    if let Ok(output) = which_result {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+
+    // 2. Try a login shell to resolve PATH (catches .zprofile / .bash_profile exports)
+    #[cfg(not(target_os = "windows"))]
+    {
+        let shells = ["/bin/zsh", "/bin/bash"];
+        for shell in &shells {
+            if let Ok(output) = std::process::Command::new(shell)
+                .args(["-lc", "which claude"])
+                .output()
+            {
+                if output.status.success() {
+                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !path.is_empty() && std::path::Path::new(&path).exists() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Probe well-known install locations
+    if let Some(home) = dirs::home_dir() {
+        let candidates = [
+            home.join(".claude/local/claude"),
+            home.join(".nvm/current/bin/claude"),
+            home.join(".local/bin/claude"),
+            #[cfg(target_os = "macos")]
+            PathBuf::from("/opt/homebrew/bin/claude"),
+            #[cfg(target_os = "macos")]
+            PathBuf::from("/usr/local/bin/claude"),
+            #[cfg(target_os = "linux")]
+            PathBuf::from("/usr/local/bin/claude"),
+        ];
+        for candidate in &candidates {
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
+}
 
 #[tauri::command]
 async fn check_claude_available() -> bool {
-    tokio::task::spawn_blocking(|| {
-        #[cfg(target_os = "windows")]
-        let result = {
-            use std::os::windows::process::CommandExt;
-            std::process::Command::new("where")
-                .arg("claude")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .status()
-        };
-        #[cfg(not(target_os = "windows"))]
-        let result = std::process::Command::new("which")
-            .arg("claude")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
-        result.map(|s| s.success()).unwrap_or(false)
-    })
-    .await
-    .unwrap_or(false)
+    tokio::task::spawn_blocking(|| resolve_claude_binary().is_some())
+        .await
+        .unwrap_or(false)
 }
 
 // ── File system watcher ───────────────────────────────────────────────
@@ -983,6 +1069,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Arc::new(TerminalState::default()))
         .manage(Arc::new(ClaudeState::default()))
         .manage(Arc::new(git::github::GitHubState::default()))

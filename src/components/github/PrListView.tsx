@@ -4,6 +4,7 @@ import { Copy, RefreshCw } from "lucide-react";
 import { useGitHubStore, useGitHubStateForKey, updateGitHubSessionForKey, type PrSummary } from "../../store/githubStore";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
+import { clipboardWrite } from "../../utils/clipboard";
 
 export function PrListView() {
   const sessionKey = usePillSessionId();
@@ -41,8 +42,8 @@ export function PrListView() {
       const items: MenuEntry[] = [
         { label: "Open", action: () => handleSelect(pr) },
         "separator",
-        { label: "Copy PR Number", icon: <Copy size={12} />, action: () => navigator.clipboard.writeText(`#${pr.number}`) },
-        { label: "Copy Title", icon: <Copy size={12} />, action: () => navigator.clipboard.writeText(pr.title) },
+        { label: "Copy PR Number", icon: <Copy size={12} />, action: () => clipboardWrite(`#${pr.number}`) },
+        { label: "Copy Title", icon: <Copy size={12} />, action: () => clipboardWrite(pr.title) },
       ];
       contextMenu.show(e, items);
     },

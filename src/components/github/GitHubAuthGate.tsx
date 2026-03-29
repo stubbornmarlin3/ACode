@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Github, Copy, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { clipboardWrite } from "../../utils/clipboard";
 import { useGitHubStore } from "../../store/githubStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
@@ -72,7 +73,7 @@ export function GitHubAuthGate() {
       setUserCode(flow.user_code);
 
       // Copy code to clipboard and open browser
-      await navigator.clipboard.writeText(flow.user_code);
+      await clipboardWrite(flow.user_code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       await openUrl(flow.verification_uri);
@@ -111,7 +112,7 @@ export function GitHubAuthGate() {
   };
 
   const handleCopyCode = async () => {
-    await navigator.clipboard.writeText(userCode);
+    await clipboardWrite(userCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

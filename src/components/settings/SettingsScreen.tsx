@@ -6,7 +6,6 @@ import {
   type KeybindAction,
   type PillsSettings,
   type SidebarSettings,
-  type ClaudeSettings,
   type SettingsOverrides,
 } from "../../store/settingsStore";
 import { useEditorStore } from "../../store/editorStore";
@@ -99,6 +98,7 @@ function KeybindButton({ action, keys }: { action: KeybindAction; keys: string }
 
       const parts: string[] = [];
       if (e.ctrlKey) parts.push("Ctrl");
+      if (e.metaKey) parts.push("Cmd");
       if (e.shiftKey) parts.push("Shift");
       if (e.altKey) parts.push("Alt");
 
@@ -269,7 +269,7 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
   const appearance = useSettingsStore((s) => s.appearance);
   const pills = useSettingsStore((s) => s.pills);
   const sidebarSettings = useSettingsStore((s) => s.sidebar);
-  const claudeSettings = useSettingsStore((s) => s.claude);
+
 
   // Global setters
   const setEditorSetting = useSettingsStore((s) => s.setEditorSetting);
@@ -277,7 +277,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
   const setAppearanceSetting = useSettingsStore((s) => s.setAppearanceSetting);
   const setPillsSetting = useSettingsStore((s) => s.setPillsSetting);
   const setSidebarSetting = useSettingsStore((s) => s.setSidebarSetting);
-  const setClaudeSetting = useSettingsStore((s) => s.setClaudeSetting);
 
   // Project setters
   const setProjectEditorSetting = useSettingsStore((s) => s.setProjectEditorSetting);
@@ -285,7 +284,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
   const setProjectAppearanceSetting = useSettingsStore((s) => s.setProjectAppearanceSetting);
   const setProjectPillsSetting = useSettingsStore((s) => s.setProjectPillsSetting);
   const setProjectSidebarSetting = useSettingsStore((s) => s.setProjectSidebarSetting);
-  const setProjectClaudeSetting = useSettingsStore((s) => s.setProjectClaudeSetting);
 
   const resetAllSettings = useSettingsStore((s) => s.resetAllSettings);
 
@@ -302,8 +300,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
     isWorkspace ? setProjectPillsSetting(key, value) : setPillsSetting(key, value);
   const sidebarSet = <K extends keyof SidebarSettings>(key: K, value: SidebarSettings[K]) =>
     isWorkspace ? setProjectSidebarSetting(key, value) : setSidebarSetting(key, value);
-  const claudeSet = <K extends keyof ClaudeSettings>(key: K, value: ClaudeSettings[K]) =>
-    isWorkspace ? setProjectClaudeSetting(key, value) : setClaudeSetting(key, value);
 
   return (
     <div className="settings-screen">
@@ -524,29 +520,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
           {/* ── Claude ── */}
           <div className="settings-section">
             <h3 className="settings-section__title">Claude</h3>
-            <div className="settings-row">
-              <span className="settings-row__label">
-                Permission mode
-                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="claude" settingKey="permissionMode" />}
-              </span>
-              <div className="settings-row__control">
-                {isWorkspace && <OverrideBadge category="claude" settingKey="permissionMode" />}
-                <ResetButton isDefault={claudeSettings.permissionMode === DEFAULTS.claude.permissionMode} onReset={() => claudeSet("permissionMode", DEFAULTS.claude.permissionMode)} />
-                <select
-                  className="settings-input"
-                  value={claudeSettings.permissionMode}
-                  onChange={(e) => claudeSet("permissionMode", e.target.value as "auto" | "smart" | "interactive")}
-                >
-                  <option value="auto">Auto (bypass all, including questions)</option>
-                  <option value="smart">Smart (auto-approve tools, ask questions)</option>
-                  <option value="interactive">Interactive (approve everything)</option>
-                </select>
-              </div>
-            </div>
-            <p className="settings-hint">
-              Smart mode auto-approves file edits and commands but pauses for questions and plan approval.
-              Changing this requires reconnecting Claude.
-            </p>
           </div>
 
           {/* ── MCP Servers ── */}

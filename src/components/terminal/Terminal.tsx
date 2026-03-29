@@ -8,6 +8,8 @@ import { useSettingsStore } from "../../store/settingsStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { invoke } from "@tauri-apps/api/core";
+import { platform } from "@tauri-apps/plugin-os";
+import { clipboardWrite, clipboardRead } from "../../utils/clipboard";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 
@@ -105,10 +107,12 @@ export function Terminal() {
     fitAddonRef.current = fitAddon;
     xterm.write("\x1b[?25l");
 
-    // Ctrl+C copies selected text
+    // Cmd+C (macOS) or Ctrl+C (other) copies selected text
+    const isMac = platform() === "macos";
     xterm.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.ctrlKey && e.key === "c" && xterm.hasSelection()) {
-        navigator.clipboard.writeText(xterm.getSelection());
+      const copyMod = isMac ? e.metaKey : e.ctrlKey;
+      if (e.type === "keydown" && copyMod && e.key === "c" && xterm.hasSelection()) {
+        clipboardWrite(xterm.getSelection());
         xterm.clearSelection();
         return false;
       }
@@ -199,23 +203,25 @@ export function Terminal() {
       const xterm = xtermRef.current;
       const hasSelection = xterm?.hasSelection() ?? false;
 
+      const mod = platform() === "macos" ? "Cmd" : "Ctrl";
+
       const items: MenuEntry[] = [
         {
           label: "Copy",
           icon: <Copy size={12} />,
-          shortcut: "Ctrl+C",
+          shortcut: `${mod}+C`,
           action: () => {
             if (xterm && hasSelection) {
-              navigator.clipboard.writeText(xterm.getSelection());
+              clipboardWrite(xterm.getSelection());
             }
           },
         },
         {
           label: "Paste",
           icon: <ClipboardPaste size={12} />,
-          shortcut: "Ctrl+V",
+          shortcut: `${mod}+V`,
           action: async () => {
-            const text = await navigator.clipboard.readText();
+            const text = await clipboardRead();
             if (text) {
               const key = getKey();
               if (key) invoke("write_terminal", { key, data: text }).catch(() => {});

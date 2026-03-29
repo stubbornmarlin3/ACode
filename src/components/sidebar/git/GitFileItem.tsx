@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { Plus, Minus, Undo2, File, Copy, ExternalLink, Terminal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { clipboardWrite } from "../../../utils/clipboard";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore, type GitFileChange } from "../../../store/gitStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../../contextmenu/ContextMenu";
@@ -91,12 +92,12 @@ export function GitFileItem({ change }: Props) {
       items.push({
         label: "Copy Name",
         icon: <Copy size={12} />,
-        action: () => navigator.clipboard.writeText(fileName),
+        action: () => clipboardWrite(fileName),
       });
       items.push({
         label: "Copy Path",
         icon: <Copy size={12} />,
-        action: () => navigator.clipboard.writeText(change.path),
+        action: () => clipboardWrite(change.path),
       });
       items.push("separator");
       items.push({

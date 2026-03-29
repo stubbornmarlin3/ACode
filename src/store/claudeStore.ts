@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useActivityStore } from "./activityStore";
 import { useLayoutStore } from "./layoutStore";
-import { useSettingsStore } from "./settingsStore";
+
 
 export interface ToolUseEntry {
   id: string;
@@ -54,7 +54,7 @@ export interface PendingInteraction {
   /** For ExitPlanMode: the plan markdown */
   plan?: string;
   /** Tool category for UI rendering */
-  category: "question" | "plan-exit" | "plan-enter" | "edit" | "bash" | "generic";
+  category: "question" | "plan-exit" | "plan-enter";
   timestamp: number;
   /** If auto-resolved (bypass mode), the answer the CLI sent. Null = still waiting for user. */
   autoAnswer?: string;
@@ -74,14 +74,6 @@ const PLAN_ENTER_TOOLS = new Set([
   "EnterPlanMode", "enter_plan_mode",
 ]);
 
-const EDIT_TOOLS = new Set([
-  "Edit", "EditFile", "edit_file", "Write", "WriteFile", "write_file",
-  "MultiEdit", "multi_edit",
-]);
-
-const BASH_TOOLS = new Set([
-  "Bash", "bash", "Execute", "execute", "RunCommand", "run_command",
-]);
 
 /** State for a single project's Claude session */
 export interface ClaudeProjectState {
@@ -104,6 +96,8 @@ export interface ClaudeProjectState {
   pendingInteractions: PendingInteraction[];
   /** Whether Claude is currently in plan mode */
   isInPlanMode: boolean;
+  /** Generation counter — incremented on each spawn so stale output from killed processes is ignored */
+  generation: number;
 }
 
 const EMPTY_PROJECT: ClaudeProjectState = {
@@ -122,6 +116,7 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   lastSessionId: null,
   pendingInteractions: [],
   isInPlanMode: false,
+  generation: -1,
 };
 
 interface ClaudeStore {
@@ -132,9 +127,9 @@ interface ClaudeStore {
 
   setActiveKey: (key: string | null) => void;
   addUserMessage: (content: string) => void;
-  processStreamChunk: (key: string, chunk: string) => void;
+  processStreamChunk: (key: string, chunk: string, generation: number) => void;
   setShowingOutput: (showing: boolean) => void;
-  setProjectSpawned: (key: string, spawned: boolean) => void;
+  setProjectSpawned: (key: string, spawned: boolean, generation?: number) => void;
   clearConversation: (key: string) => void;
   /** Set the model for the active project (takes effect on next spawn/reconnect) */
   setModel: (model: string | null) => void;
@@ -210,9 +205,15 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     });
   },
 
-  processStreamChunk: (key, chunk) => {
+  processStreamChunk: (key, chunk, generation) => {
     const state = get();
     const proj = getProj(state.projects, key);
+
+    // Ignore output from a previous (killed) process — use < so events from a
+    // newly-spawned process aren't dropped during the brief window between
+    // spawn_claude returning and setProjectSpawned updating the generation.
+    if (generation < proj.generation) return;
+
     const fullBuffer = proj.rawBuffer + chunk;
     const { parsed, remainder } = parseJsonLines(fullBuffer);
 
@@ -227,9 +228,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     let lastSessionId = proj.lastSessionId;
     let pendingInteractions = [...proj.pendingInteractions];
     let isInPlanMode = proj.isInPlanMode;
-    const permissionMode = useSettingsStore.getState().claude.permissionMode;
-    const isSmart = permissionMode === "smart";
-    const isInteractive = permissionMode === "interactive";
+    // Always bypass CLI permissions; only intercept questions & plan approval
 
     for (const event of parsed) {
       const ev = event as Record<string, unknown>;
@@ -313,10 +312,7 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
           }
         }
 
-        // Detect tool uses that need user interaction.
-        // In "smart" mode: auto-approve non-interactive tools, pause for questions/plan.
-        // In "interactive" mode: pause for everything.
-        // In "auto" mode: bypassPermissions handles it; still detect questions for read-only display.
+        // Detect tool uses that need user interaction (questions & plan approval).
         if (toolUses.length > 0) {
           for (const tu of toolUses) {
             const nameLower = tu.name.toLowerCase();
@@ -334,20 +330,10 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
             if (isPlanEnter) isInPlanMode = true;
             if (isPlanExit) isInPlanMode = false;
 
-            // In "smart" mode: auto-approve non-interactive tools immediately via stdin
-            if (isSmart && !isAlwaysInteractive) {
-              invoke("write_claude", {
-                key,
-                data: JSON.stringify({ type: "tool_result", tool_use_id: tu.id, result: "approved" }),
-              }).catch(() => {});
-              continue;
-            }
+            // CLI runs with bypassPermissions — only intercept questions & plan tools.
+            if (!isAlwaysInteractive) continue;
 
-            // In "auto" mode (bypassPermissions): still detect questions/plan for read-only display
-            // but skip non-interactive tools entirely
-            if (!isAlwaysInteractive && !isInteractive) continue;
-
-            let category: PendingInteraction["category"] = "generic";
+            let category: PendingInteraction["category"] = "question";
             let questions: AskQuestion[] | undefined;
             let plan: string | undefined;
 
@@ -380,10 +366,6 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
               plan = tu.input.plan as string | undefined;
             } else if (isPlanEnter) {
               category = "plan-enter";
-            } else if (EDIT_TOOLS.has(tu.name)) {
-              category = "edit";
-            } else if (BASH_TOOLS.has(tu.name)) {
-              category = "bash";
             }
 
             pendingInteractions.push({
@@ -453,7 +435,12 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         streamingText = "";
         streamingThinking = "";
         activeToolUse = null;
-        if (lastOutputLine === "Thinking...") {
+        // Show error messages from failed spawn/write
+        const errorMsg = ev.error as string | undefined;
+        if (errorMsg) {
+          messages.push({ role: "assistant", text: `**Error:** ${errorMsg}` });
+          lastOutputLine = errorMsg;
+        } else if (lastOutputLine === "Thinking...") {
           lastOutputLine = "";
         }
         // Set activity to unread (or idle if this session's pill is currently visible)
@@ -464,10 +451,12 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         if (modelUsage && sessionInfo) {
           const firstModel = Object.values(modelUsage)[0];
           if (firstModel) {
+            // Context usage = non-cached input + cached input (read + creation).
+            // Output tokens are generated, not part of the context window.
             sessionInfo = {
               ...sessionInfo,
               contextWindow: firstModel.contextWindow || sessionInfo.contextWindow,
-              tokensUsed: (firstModel.inputTokens || 0) + (firstModel.outputTokens || 0) +
+              tokensUsed: (firstModel.inputTokens || 0) +
                 (firstModel.cacheReadInputTokens || 0) + (firstModel.cacheCreationInputTokens || 0),
             };
           }
@@ -500,9 +489,11 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     set({ projects: setProj(projects, activeKey, { showingOutput: showing }) });
   },
 
-  setProjectSpawned: (key, spawned) => {
+  setProjectSpawned: (key, spawned, generation) => {
     const { projects } = get();
-    set({ projects: setProj(projects, key, { isSpawned: spawned }) });
+    const partial: Partial<ClaudeProjectState> = { isSpawned: spawned };
+    if (generation !== undefined) partial.generation = generation;
+    set({ projects: setProj(projects, key, partial) });
   },
 
   clearConversation: (key) => {
@@ -521,13 +512,17 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     const proj = projects[key];
     if (!proj?.isSpawned) return;
 
-    // Kill the process (on Windows there's no clean SIGINT)
+    // Send SIGINT to abort the current turn. In -p mode this kills the
+    // process (it doesn't stay alive like in interactive mode).
     await invoke("interrupt_claude", { key });
 
-    // Preserve messages and session ID, just stop streaming state
+    // Mark as not spawned — the process will exit from SIGINT.
+    // Keep lastSessionId so the next spawn resumes the conversation.
+    // The Rust side cleans up any stale lock file before respawning.
     set({
       projects: setProj(get().projects, key, {
         isStreaming: false,
+        isSpawned: false,
         rawBuffer: "",
         streamingText: "",
         streamingThinking: "",
@@ -593,18 +588,17 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
     const model = get().projects[activeKey]?.selectedModel || undefined;
 
     // Resume previous session if we have one
-    const permissionMode = useSettingsStore.getState().claude.permissionMode;
-    await invoke("spawn_claude", {
+    const generation = await invoke<number>("spawn_claude", {
       key: activeKey,
       cwd: activeKey,
       mcpConfigPath,
       sessionId: resumeSessionId,
       model,
-      permissionMode,
     });
     set({
       projects: setProj(get().projects, activeKey, {
         isSpawned: true,
+        generation,
         lastOutputLine: "Connected",
       }),
     });

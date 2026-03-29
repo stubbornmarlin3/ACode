@@ -3,8 +3,23 @@ import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { python } from "@codemirror/lang-python";
+import { rust } from "@codemirror/lang-rust";
+import { html } from "@codemirror/lang-html";
+import { css } from "@codemirror/lang-css";
+import { markdown } from "@codemirror/lang-markdown";
+import { cpp } from "@codemirror/lang-cpp";
+import { java } from "@codemirror/lang-java";
+import { xml } from "@codemirror/lang-xml";
+import { sql } from "@codemirror/lang-sql";
+import { yaml } from "@codemirror/lang-yaml";
+import { go } from "@codemirror/lang-go";
+import { php } from "@codemirror/lang-php";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
+import { platform } from "@tauri-apps/plugin-os";
+import { clipboardWrite, clipboardRead } from "../../utils/clipboard";
 import {
   Copy,
   ClipboardPaste,
@@ -26,9 +41,58 @@ function getLanguageExtension(filename: string) {
       return javascript({ typescript: true, jsx: ext === "tsx" });
     case "js":
     case "jsx":
+    case "mjs":
+    case "cjs":
       return javascript({ jsx: ext === "jsx" });
     case "json":
-      return javascript();
+    case "jsonc":
+      return json();
+    case "py":
+    case "pyw":
+      return python();
+    case "rs":
+      return rust();
+    case "go":
+      return go();
+    case "html":
+    case "htm":
+    case "svelte":
+    case "vue":
+      return html();
+    case "css":
+    case "scss":
+    case "less":
+      return css();
+    case "md":
+    case "mdx":
+    case "markdown":
+      return markdown();
+    case "c":
+    case "h":
+    case "cpp":
+    case "hpp":
+    case "cc":
+    case "cxx":
+      return cpp();
+    case "java":
+      return java();
+    case "xml":
+    case "svg":
+    case "plist":
+      return xml();
+    case "sql":
+      return sql();
+    case "yaml":
+    case "yml":
+      return yaml();
+    case "php":
+      return php();
+    case "toml":
+    case "ini":
+    case "cfg":
+    case "conf":
+      // No dedicated CodeMirror lang for these yet
+      return [];
     default:
       return [];
   }
@@ -48,6 +112,9 @@ export function EditorPane() {
     [openFiles, activeFilePath]
   );
 
+  // Track the last content set by the editor itself (vs external updates)
+  const editorContentRef = useRef<string>("");
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -61,6 +128,8 @@ export function EditorPane() {
     const lang = getLanguageExtension(activeFile.name);
     const filePath = activeFile.path;
     const settings = useSettingsStore.getState().editor;
+
+    editorContentRef.current = activeFile.content;
 
     const fontTheme = EditorView.theme({
       "&": { background: "transparent" },
@@ -79,7 +148,9 @@ export function EditorPane() {
       indentUnit.of(" ".repeat(settings.tabSize)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          updateFileContent(filePath, update.state.doc.toString());
+          const newContent = update.state.doc.toString();
+          editorContentRef.current = newContent;
+          updateFileContent(filePath, newContent);
         }
       }),
     ];
@@ -104,6 +175,21 @@ export function EditorPane() {
     };
   }, [activeFilePath, editorSettings]); // re-create when settings change
 
+  // Sync external content changes (e.g. file reloaded from disk) into the editor
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !activeFile) return;
+    if (activeFile.content !== editorContentRef.current) {
+      const currentDoc = view.state.doc.toString();
+      if (activeFile.content !== currentDoc) {
+        view.dispatch({
+          changes: { from: 0, to: currentDoc.length, insert: activeFile.content },
+        });
+        editorContentRef.current = activeFile.content;
+      }
+    }
+  }, [activeFile?.content]);
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       const view = viewRef.current;
@@ -111,15 +197,17 @@ export function EditorPane() {
 
       const hasSelection = view.state.selection.main.from !== view.state.selection.main.to;
 
+      const mod = platform() === "macos" ? "Cmd" : "Ctrl";
+
       const items: MenuEntry[] = [
         {
           label: "Cut",
           icon: <Scissors size={12} />,
-          shortcut: "Ctrl+X",
+          shortcut: `${mod}+X`,
           action: () => {
             if (hasSelection) {
               const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-              navigator.clipboard.writeText(sel);
+              clipboardWrite(sel);
               view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
             }
           },
@@ -127,20 +215,20 @@ export function EditorPane() {
         {
           label: "Copy",
           icon: <Copy size={12} />,
-          shortcut: "Ctrl+C",
+          shortcut: `${mod}+C`,
           action: () => {
             if (hasSelection) {
               const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-              navigator.clipboard.writeText(sel);
+              clipboardWrite(sel);
             }
           },
         },
         {
           label: "Paste",
           icon: <ClipboardPaste size={12} />,
-          shortcut: "Ctrl+V",
+          shortcut: `${mod}+V`,
           action: async () => {
-            const text = await navigator.clipboard.readText();
+            const text = await clipboardRead();
             if (text) {
               view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: text } });
             }
@@ -150,17 +238,18 @@ export function EditorPane() {
         {
           label: "Find",
           icon: <Search size={12} />,
-          shortcut: "Ctrl+F",
+          shortcut: `${mod}+F`,
           action: () => {
             // Trigger CodeMirror's built-in search
-            document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true }));
+            const isMac = platform() === "macos";
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: !isMac, metaKey: isMac }));
           },
         },
         "separator",
         {
           label: "Undo",
           icon: <Undo2 size={12} />,
-          shortcut: "Ctrl+Z",
+          shortcut: `${mod}+Z`,
           action: () => {
             import("@codemirror/commands").then(({ undo }) => undo(view));
           },
@@ -168,7 +257,7 @@ export function EditorPane() {
         {
           label: "Redo",
           icon: <Redo2 size={12} />,
-          shortcut: "Ctrl+Y",
+          shortcut: platform() === "macos" ? "Cmd+Shift+Z" : "Ctrl+Y",
           action: () => {
             import("@codemirror/commands").then(({ redo }) => redo(view));
           },
@@ -179,11 +268,12 @@ export function EditorPane() {
         items.push("separator");
         items.push({
           label: "Save",
-          shortcut: "Ctrl+S",
+          shortcut: platform() === "macos" ? "Cmd+S" : "Ctrl+S",
           action: async () => {
             const file = useEditorStore.getState().openFiles.find((f) => f.path === activeFilePath);
             if (file) {
               await invoke("save_file", { path: activeFilePath, content: file.content });
+              useEditorStore.getState().markFileSaved(activeFilePath);
             }
           },
         });

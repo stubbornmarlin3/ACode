@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { mergeDiff3 } from "node-diff3";
 import { useLayoutStore, type PillBarState, type PillSessionType, genSessionId } from "./layoutStore";
 import { useTerminalStore } from "./terminalStore";
 import { useClaudeStore } from "./claudeStore";
@@ -59,6 +60,8 @@ export interface OpenFile {
   path: string;
   name: string;
   content: string;
+  /** Last known on-disk content — used as the base for 3-way merges */
+  baseContent: string;
   isDirty: boolean;
 }
 
@@ -87,6 +90,8 @@ interface EditorStore {
   closeFile: (path: string) => void;
   setActiveFile: (path: string) => void;
   updateFileContent: (path: string, content: string) => void;
+  markFileSaved: (path: string) => void;
+  reloadFileFromDisk: (path: string) => Promise<void>;
   expandDir: (path: string) => Promise<void>;
   toggleDir: (path: string) => void;
   reorderOpenFiles: (fromIndex: number, toIndex: number) => void;
@@ -257,7 +262,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
     const content = await invoke<string>("read_file_contents", { path });
     set((s) => ({
-      openFiles: [...s.openFiles, { path, name, content, isDirty: false }],
+      openFiles: [...s.openFiles, { path, name, content, baseContent: content, isDirty: false }],
       activeFilePath: path,
     }));
   },
@@ -283,6 +288,60 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         f.path === path ? { ...f, content, isDirty: true } : f
       ),
     }));
+  },
+
+  markFileSaved: (path) => {
+    set((s) => ({
+      openFiles: s.openFiles.map((f) =>
+        f.path === path ? { ...f, baseContent: f.content, isDirty: false } : f
+      ),
+    }));
+  },
+
+  reloadFileFromDisk: async (path) => {
+    const { openFiles } = get();
+    const file = openFiles.find((f) => f.path === path);
+    if (!file) return;
+    try {
+      const diskContent = await invoke<string>("read_file_contents", { path });
+      if (diskContent === file.baseContent) return; // disk hasn't actually changed
+
+      if (!file.isDirty) {
+        // No local edits — just accept the new disk content
+        set((s) => ({
+          openFiles: s.openFiles.map((f) =>
+            f.path === path ? { ...f, content: diskContent, baseContent: diskContent } : f
+          ),
+        }));
+        return;
+      }
+
+      // File is dirty — 3-way merge: base (last known disk) / ours (editor) / theirs (new disk)
+      const result = mergeDiff3(file.content, file.baseContent, diskContent, {
+        label: { a: "Your Changes", b: "External Changes" },
+      });
+      if (!result.conflict) {
+        // Clean merge — apply merged content, keep file dirty since it differs from disk
+        const merged = result.result.join("\n");
+        const stillDirty = merged !== diskContent;
+        set((s) => ({
+          openFiles: s.openFiles.map((f) =>
+            f.path === path ? { ...f, content: merged, baseContent: diskContent, isDirty: stillDirty } : f
+          ),
+        }));
+      } else {
+        // Conflict — insert conflict markers so the user can resolve manually
+        const merged = result.result.join("\n");
+        set((s) => ({
+          openFiles: s.openFiles.map((f) =>
+            f.path === path ? { ...f, content: merged, baseContent: diskContent, isDirty: true } : f
+          ),
+        }));
+        console.warn(`[editor] Merge conflict in ${path} — conflict markers inserted`);
+      }
+    } catch {
+      // File may have been deleted — refreshTree handles that
+    }
   },
 
   expandDir: async (path) => {

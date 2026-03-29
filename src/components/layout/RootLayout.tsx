@@ -255,9 +255,17 @@ export function RootLayout() {
   // Listen for file system changes and refresh the sidebar tree
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listen<{ paths: string[] }>("fs-change", async () => {
+    listen<{ paths: string[] }>("fs-change", async ({ payload }) => {
       try {
-        await useEditorStore.getState().refreshTree();
+        const store = useEditorStore.getState();
+        await store.refreshTree();
+        // Reload contents of any open files that were changed externally
+        const openPaths = new Set(store.openFiles.map((f) => f.path));
+        for (const p of payload.paths) {
+          if (openPaths.has(p)) {
+            await useEditorStore.getState().reloadFileFromDisk(p);
+          }
+        }
       } catch {
         // Workspace root was likely deleted — close the project
         const ws = useEditorStore.getState().workspaceRoot;
@@ -285,7 +293,11 @@ export function RootLayout() {
             e.preventDefault();
             const state = useEditorStore.getState();
             const file = state.openFiles.find((f) => f.path === state.activeFilePath);
-            if (file) invoke("save_file", { path: file.path, content: file.content });
+            if (file) {
+              invoke("save_file", { path: file.path, content: file.content }).then(() => {
+                useEditorStore.getState().markFileSaved(file.path);
+              });
+            }
             return;
           }
           case "toggleSidebar":
