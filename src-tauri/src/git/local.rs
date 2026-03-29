@@ -775,8 +775,11 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
                 .map_err(|e| format!("Failed to fast-forward: {}", e))?;
             repo.set_head(&refname)
                 .map_err(|e| format!("Failed to set HEAD: {}", e))?;
-            repo.checkout_head(Some(git2::build::CheckoutBuilder::new().safe()))
-                .map_err(|e| format!("Failed to checkout: {}", e))?;
+            let commit_obj = repo
+                .find_object(fetch_commit.id(), None)
+                .map_err(|e| format!("Failed to find commit object: {}", e))?;
+            repo.reset(&commit_obj, git2::ResetType::Hard, None)
+                .map_err(|e| format!("Failed to reset to new head: {}", e))?;
             return Ok(());
         }
 

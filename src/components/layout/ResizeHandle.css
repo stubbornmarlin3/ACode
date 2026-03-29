@@ -7,7 +7,7 @@
 
 .resize-handle:hover,
 .resize-handle--active {
-  background: var(--accent-blue);
+  background: transparent;
 }
 
 .resize-handle--horizontal {

@@ -25,6 +25,10 @@ interface SavedSessions {
   expandedIndices?: number[];
   /** Indices of pills with open panels */
   openPanelIndices?: number[];
+  /** Per-session floating positions (x, y, width), indexed by session position */
+  floatingPositions?: ({ x: number; y: number; width: number } | null)[];
+  /** Docked slot assignments — slot index → session index (or null) */
+  dockedSlotIndices?: (number | null)[];
 }
 
 function getSessionsPath(projectPath: string): string {
@@ -55,7 +59,7 @@ export function persistCurrentSessions(): void {
   const editor = useEditorStore.getState();
   const projectSessions = layout.pillBar.sessions.filter((s) => s.projectPath === ws);
   const activeIdx = projectSessions.findIndex((s) => s.id === layout.pillBar.activePillId);
-  const { panelHeights, expandedPillIds, openPanelIds } = layout.pillBar;
+  const { panelHeights, expandedPillIds, openPanelIds, floatingPositions, dockedSlots } = layout.pillBar;
   saveSessions(ws, {
     sessions: projectSessions.map((s) => s.type),
     activeIndex: Math.max(0, activeIdx),
@@ -68,6 +72,14 @@ export function persistCurrentSessions(): void {
     openPanelIndices: projectSessions
       .map((s, i) => openPanelIds.includes(s.id) ? i : -1)
       .filter((i) => i >= 0),
+    floatingPositions: projectSessions.map((s) => {
+      const fp = floatingPositions[s.id];
+      return fp ? { x: fp.x, y: fp.y, width: fp.width } : null;
+    }),
+    dockedSlotIndices: dockedSlots.map((slotId) => {
+      if (!slotId) return null;
+      return projectSessions.findIndex((s) => s.id === slotId);
+    }),
   });
 }
 
@@ -259,6 +271,35 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
             pillBar: { ...s.pillBar, panelHeights: { ...s.pillBar.panelHeights, ...restoredHeights } },
           }));
         }
+      }
+
+      // Restore per-session floating positions
+      if (savedData?.floatingPositions) {
+        const restoredPositions: Record<string, { x: number; y: number; width: number; zIndex: number }> = {};
+        newSessions.forEach((sess, i) => {
+          const fp = savedData!.floatingPositions![i];
+          if (fp) restoredPositions[sess.id] = { ...fp, zIndex: i + 1 };
+        });
+        if (Object.keys(restoredPositions).length > 0) {
+          useLayoutStore.setState((s) => ({
+            pillBar: {
+              ...s.pillBar,
+              floatingPositions: { ...s.pillBar.floatingPositions, ...restoredPositions },
+              nextZIndex: Math.max(s.pillBar.nextZIndex, newSessions.length + 1),
+            },
+          }));
+        }
+      }
+
+      // Restore docked slot assignments
+      if (savedData?.dockedSlotIndices) {
+        const restoredSlots = savedData.dockedSlotIndices.map((idx) => {
+          if (idx == null || idx < 0 || idx >= newSessions.length) return null;
+          return newSessions[idx].id;
+        });
+        useLayoutStore.setState((s) => ({
+          pillBar: { ...s.pillBar, dockedSlots: restoredSlots },
+        }));
       }
 
       // Build restored expandedPillIds and openPanelIds from saved indices

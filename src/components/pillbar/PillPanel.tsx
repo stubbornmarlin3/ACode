@@ -10,12 +10,15 @@ import { GitHubPanel } from "../github/GitHubPanel";
 interface Props {
   sessionId: string;
   mode: PillMode;
+  /** When provided, overrides the stored height (e.g. when clamped to fit on screen). */
+  effectiveHeight?: number;
 }
 
-export function PillPanel({ sessionId, mode }: Props) {
+export function PillPanel({ sessionId, mode, effectiveHeight }: Props) {
   const panelHeight = useLayoutStore((s) => s.pillBar.panelHeights[sessionId]);
   const defaultHeight = useSettingsStore((s) => s.appearance.defaultPanelHeight);
-  const height = panelHeight ?? defaultHeight;
+  const storedHeight = panelHeight ?? defaultHeight;
+  const height = effectiveHeight ?? storedHeight;
   const heightRef = useRef(height);
   heightRef.current = height;
 
@@ -29,11 +32,18 @@ export function PillPanel({ sessionId, mode }: Props) {
     const handleMove = (ev: PointerEvent) => {
       const delta = startY - ev.clientY; // dragging up = increase height
       startY = ev.clientY;
-      const next = Math.max(100, Math.min(window.innerHeight * 0.85, heightRef.current + delta));
+      const prev = heightRef.current;
+      const next = Math.max(100, Math.min(window.innerHeight * 0.85, prev + delta));
       heightRef.current = next;
       // Update DOM directly for smooth drag
       const slot = target.closest(".pill-panel__slot") as HTMLElement | null;
       if (slot) slot.style.height = `${next}px`;
+      // Adjust floating unit top so the pill stays in place
+      const unit = target.closest(".floating-pill-unit") as HTMLElement | null;
+      if (unit) {
+        const currentTop = parseFloat(unit.style.top) || 0;
+        unit.style.top = `${currentTop - (next - prev)}px`;
+      }
     };
 
     const handleUp = () => {

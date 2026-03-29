@@ -37,7 +37,7 @@ function BorderSpinner({ color }: { color: "blue" | "orange" }) {
   const { w, h } = dims;
   if (!w || !h) return <div ref={containerRef} className="pill-item__border-spinner" />;
 
-  const r = 20; // border-radius of expanded pill
+  const r = 12; // border-radius of expanded pill
   const stroke = 1.5;
   const offset = stroke / 2;
   const straightH = Math.max(0, w - 2 * r);

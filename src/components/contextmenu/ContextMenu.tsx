@@ -17,24 +17,26 @@ interface Props {
   y: number;
   items: MenuEntry[];
   onClose: () => void;
+  /** When true, x is the menu's right edge and y is the menu's bottom edge. */
+  anchorBottomRight?: boolean;
 }
 
-export function ContextMenu({ x, y, items, onClose }: Props) {
+export function ContextMenu({ x, y, items, onClose, anchorBottomRight }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const menu = menuRef.current;
     if (!menu) return;
     const rect = menu.getBoundingClientRect();
-    let ax = x;
-    let ay = y;
-    if (x + rect.width > window.innerWidth) ax = window.innerWidth - rect.width - 4;
-    if (y + rect.height > window.innerHeight) ay = window.innerHeight - rect.height - 4;
-    if (ax < 0) ax = 4;
-    if (ay < 0) ay = 4;
+    let ax = anchorBottomRight ? x - rect.width : x;
+    let ay = anchorBottomRight ? y - rect.height : y;
+    if (ax + rect.width > window.innerWidth) ax = window.innerWidth - rect.width - 8;
+    if (ay + rect.height > window.innerHeight) ay = window.innerHeight - rect.height - 8;
+    if (ax < 8) ax = 8;
+    if (ay < 8) ay = 8;
     menu.style.left = `${ax}px`;
     menu.style.top = `${ay}px`;
-  }, [x, y]);
+  }, [x, y, anchorBottomRight]);
 
   const handleClick = useCallback(
     (action: () => void) => {
@@ -75,7 +77,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
 }
 
 export function useContextMenu() {
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[]; anchorBottomRight?: boolean } | null>(null);
 
   const show = useCallback((e: React.MouseEvent, items: MenuEntry[]) => {
     e.preventDefault();
@@ -83,7 +85,13 @@ export function useContextMenu() {
     setMenu({ x: e.clientX, y: e.clientY, items });
   }, []);
 
+  /** Show a context menu at explicit coordinates.
+   *  When anchorBottomRight is true, (x,y) is the menu's bottom-right corner. */
+  const showAt = useCallback((x: number, y: number, items: MenuEntry[], anchorBottomRight?: boolean) => {
+    setMenu({ x, y, items, anchorBottomRight });
+  }, []);
+
   const close = useCallback(() => setMenu(null), []);
 
-  return { menu, show, close };
+  return { menu, show, showAt, close };
 }

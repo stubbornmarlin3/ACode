@@ -1,7 +1,25 @@
 {
   "sessions": [
     "claude",
-    "terminal"
+    "claude",
+    "terminal",
+    "github"
   ],
-  "activeIndex": 0
+  "activeIndex": 2,
+  "openFiles": [],
+  "activeFilePath": null,
+  "panelHeights": [
+    649,
+    698,
+    null,
+    null
+  ],
+  "expandedIndices": [
+    0,
+    1
+  ],
+  "openPanelIndices": [
+    0,
+    1
+  ]
 }

@@ -75,6 +75,7 @@ export function WindowControls() {
   const notificationPanel = centerOpen && bellRef.current ? (
     <NotificationCenterPanel
       anchorRect={bellRef.current.getBoundingClientRect()}
+      anchorRef={bellRef}
       onClose={() => setCenterOpen(false)}
     />
   ) : null;

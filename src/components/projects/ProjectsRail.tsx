@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./ProjectsRail.css";
-import { FolderOpen, GitFork, ExternalLink, XCircle, Plus } from "lucide-react";
+import { FolderOpen, GitFork, ExternalLink, XCircle, Plus, Terminal as TerminalIcon, Github } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useLayoutStore, type Project, type PillSession } from "../../store/layoutStore";
+import { useLayoutStore, type Project, type PillSession, type PillSessionType } from "../../store/layoutStore";
+import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { useEditorStore, persistCurrentSessions } from "../../store/editorStore";
 import { useActivityStore, getProjectActivity } from "../../store/activityStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useClaudeStore } from "../../store/claudeStore";
 import { useGitHubStore } from "../../store/githubStore";
+import { useGitStore } from "../../store/gitStore";
 import { generateProjectAvatar } from "../../utils/projectAvatar";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import { AddSessionButton, cleanupSession } from "../pillbar/PillBar";
@@ -51,7 +53,19 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const togglePillExpanded = useLayoutStore((s) => s.togglePillExpanded);
   const togglePanelOpen = useLayoutStore((s) => s.togglePanelOpen);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
+  const addPillSession = useLayoutStore((s) => s.addPillSession);
   const clearActivityUnread = useActivityStore((s) => s.clearUnread);
+  const isRepo = useGitStore((s) => s.isRepo);
+
+  const handleAddSession = useCallback((type: PillSessionType) => {
+    if (!workspaceRoot) return;
+    const id = addPillSession(type, workspaceRoot);
+    if (type === "terminal") useTerminalStore.getState().setActiveKey(id);
+    else if (type === "claude") useClaudeStore.getState().setActiveKey(id);
+    else if (type === "github") useGitHubStore.getState().setActiveKey(id);
+    setActivePillId(id);
+    persistCurrentSessions();
+  }, [workspaceRoot, addPillSession, setActivePillId]);
 
   // Collapsed pills for the active project
   const projectSessions = allSessions.filter((s) => s.projectPath === workspaceRoot);
@@ -281,19 +295,56 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
           action: handleCloneRepo,
         },
       ];
+      if (workspaceRoot) {
+        items.push(
+          "separator",
+          {
+            label: "New Terminal",
+            icon: <TerminalIcon size={12} />,
+            action: () => handleAddSession("terminal"),
+          },
+          {
+            label: "New Claude",
+            icon: <ClaudeIcon size={12} />,
+            action: () => handleAddSession("claude"),
+          },
+        );
+        if (isRepo) {
+          items.push({
+            label: "New GitHub",
+            icon: <Github size={12} />,
+            action: () => handleAddSession("github"),
+          });
+        }
+      }
       contextMenu.show(e, items);
     },
-    [contextMenu, handleOpenFolder, handleCloneRepo]
+    [contextMenu, handleOpenFolder, handleCloneRepo, workspaceRoot, isRepo, handleAddSession]
   );
 
   return (
     <>
       <aside className="projects-rail" onContextMenu={handleRailContext}>
         <div className="projects-rail__drag-region" onMouseDown={onDrag} onDoubleClick={onDoubleClick} />
-        {/* [+P] Add project button (topmost) */}
+        {/* [+P] Add project button (topmost) — opens context menu to the left */}
         <button
           className="projects-rail__add-project"
-          onClick={handleOpenFolder}
+          onClick={(e) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const items: MenuEntry[] = [
+              {
+                label: "Open Folder",
+                icon: <FolderOpen size={12} />,
+                action: handleOpenFolder,
+              },
+              {
+                label: "Clone Repository",
+                icon: <GitFork size={12} />,
+                action: handleCloneRepo,
+              },
+            ];
+            contextMenu.showAt(rect.left - 4, rect.bottom, items, true);
+          }}
           title="Add project"
           aria-label="Add project"
         >
@@ -362,7 +413,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
         {workspaceRoot && <AddSessionButton projectPath={workspaceRoot} />}
       </aside>
       {contextMenu.menu && (
-        <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />
+        <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} anchorBottomRight={contextMenu.menu.anchorBottomRight} />
       )}
     </>
   );

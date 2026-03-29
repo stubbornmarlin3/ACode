@@ -21,6 +21,13 @@ export interface PillSession {
   projectPath: string;
 }
 
+export interface PillFloatingState {
+  x: number;      // left offset (px, relative to editor-card)
+  y: number;      // pill's top edge (px, relative to editor-card)
+  width: number;  // pill width in px
+  zIndex: number; // stacking order
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -43,6 +50,12 @@ interface LayoutStore {
     maxPanels: number;
     /** Per-pill panel height in px. Missing key = use default from settings. */
     panelHeights: Record<string, number>;
+    /** Per-pill floating position/size. Missing key = needs auto-positioning. */
+    floatingPositions: Record<string, PillFloatingState>;
+    /** Monotonically increasing z-index counter for bring-to-front. */
+    nextZIndex: number;
+    /** Quick-dock slots at bottom. Each slot holds a session ID or null. */
+    dockedSlots: (string | null)[];
   };
   projects: { projects: Project[]; activeProjectId: string | null };
   settingsOpen: boolean;
@@ -59,6 +72,13 @@ interface LayoutStore {
   addPillSession: (type: PillSessionType, projectPath: string) => string;
   removePillSession: (id: string) => void;
   reorderSessions: (projectPath: string, fromIndex: number, toIndex: number) => void;
+  setPillPosition: (id: string, x: number, y: number) => void;
+  setPillWidth: (id: string, width: number) => void;
+  bringPillToFront: (id: string) => void;
+  initFloatingPosition: (id: string, x: number, y: number, width: number) => void;
+  dockPill: (id: string, slotIndex: number) => void;
+  undockPill: (id: string) => void;
+  setDockedSlots: (slots: (string | null)[]) => void;
   setActiveProject: (id: string | null) => void;
   addProject: (project: Project) => void;
   removeProject: (id: string) => void;
@@ -105,7 +125,7 @@ function sortSessionsByExpanded(sessions: PillSession[], expandedIds: string[]):
 
 export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   sidebar: { activeTab: "explorer", isOpen: true },
-  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {} },
+  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {}, floatingPositions: {}, nextZIndex: 1, dockedSlots: [null] },
   projects: { projects: [], activeProjectId: null },
   settingsOpen: false,
   cloneExplorerOpen: false,
@@ -214,7 +234,15 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
         expanded = expanded.filter((id) => kept.has(id));
         openPanels = openPanels.filter((id) => kept.has(id));
       }
-      return { pillBar: { ...pb, maxPanels: max, expandedPillIds: expanded, openPanelIds: openPanels } };
+      // Resize docked slots array to match new max
+      let dockedSlots = pb.dockedSlots;
+      if (max > dockedSlots.length) {
+        dockedSlots = [...dockedSlots, ...Array(max - dockedSlots.length).fill(null)];
+      } else if (max < dockedSlots.length) {
+        // Undock pills that no longer fit
+        dockedSlots = dockedSlots.slice(0, max);
+      }
+      return { pillBar: { ...pb, maxPanels: max, expandedPillIds: expanded, openPanelIds: openPanels, dockedSlots } };
     }),
 
   setPanelHeight: (id, height) =>
@@ -229,12 +257,19 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
       const expanded = s.pillBar.expandedPillIds.length === 0 || s.pillBar.expandedPillIds.length < s.pillBar.maxPanels
         ? [...s.pillBar.expandedPillIds, id]
         : s.pillBar.expandedPillIds;
+      // Auto-dock into first available slot
+      const dockedSlots = [...s.pillBar.dockedSlots];
+      const emptySlot = dockedSlots.indexOf(null);
+      if (emptySlot >= 0) {
+        dockedSlots[emptySlot] = id;
+      }
       return {
         pillBar: {
           ...s.pillBar,
           sessions: [...s.pillBar.sessions, { id, type, projectPath }],
           activePillId: id,
           expandedPillIds: expanded,
+          dockedSlots,
         },
       };
     });
@@ -260,7 +295,9 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
         expandedPillIds = [activePillId];
       }
       const { [id]: _, ...panelHeights } = s.pillBar.panelHeights;
-      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds, panelHeights } };
+      const { [id]: _fp, ...floatingPositions } = s.pillBar.floatingPositions;
+      const dockedSlots = s.pillBar.dockedSlots.map((s) => s === id ? null : s);
+      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds, panelHeights, floatingPositions, dockedSlots } };
     }),
 
   reorderSessions: (projectPath, fromIndex, toIndex) =>
@@ -297,6 +334,73 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
 
       return { pillBar: { ...s.pillBar, sessions: newSessions } };
     }),
+
+  setPillPosition: (id, x, y) =>
+    set((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        floatingPositions: {
+          ...s.pillBar.floatingPositions,
+          [id]: { ...s.pillBar.floatingPositions[id], x, y },
+        },
+      },
+    })),
+
+  setPillWidth: (id, width) =>
+    set((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        floatingPositions: {
+          ...s.pillBar.floatingPositions,
+          [id]: { ...s.pillBar.floatingPositions[id], width },
+        },
+      },
+    })),
+
+  bringPillToFront: (id) =>
+    set((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        nextZIndex: s.pillBar.nextZIndex + 1,
+        floatingPositions: {
+          ...s.pillBar.floatingPositions,
+          [id]: { ...s.pillBar.floatingPositions[id], zIndex: s.pillBar.nextZIndex },
+        },
+      },
+    })),
+
+  initFloatingPosition: (id, x, y, width) =>
+    set((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        nextZIndex: s.pillBar.nextZIndex + 1,
+        floatingPositions: {
+          ...s.pillBar.floatingPositions,
+          [id]: { x, y, width, zIndex: s.pillBar.nextZIndex },
+        },
+      },
+    })),
+
+  dockPill: (id, slotIndex) =>
+    set((s) => {
+      const slots = [...s.pillBar.dockedSlots];
+      // Remove from any existing slot first
+      const existing = slots.indexOf(id);
+      if (existing >= 0) slots[existing] = null;
+      slots[slotIndex] = id;
+      // Remove floating position since it's now docked
+      const { [id]: _, ...floatingPositions } = s.pillBar.floatingPositions;
+      return { pillBar: { ...s.pillBar, dockedSlots: slots, floatingPositions } };
+    }),
+
+  undockPill: (id) =>
+    set((s) => {
+      const slots = s.pillBar.dockedSlots.map((s) => s === id ? null : s);
+      return { pillBar: { ...s.pillBar, dockedSlots: slots } };
+    }),
+
+  setDockedSlots: (slots) =>
+    set((s) => ({ pillBar: { ...s.pillBar, dockedSlots: slots } })),
 
   setActiveProject: (id) =>
     set((s) => ({ projects: { ...s.projects, activeProjectId: id } })),
@@ -369,6 +473,13 @@ export function useLayoutActions() {
       addPillSession: s.addPillSession,
       removePillSession: s.removePillSession,
       reorderSessions: s.reorderSessions,
+      setPillPosition: s.setPillPosition,
+      setPillWidth: s.setPillWidth,
+      bringPillToFront: s.bringPillToFront,
+      initFloatingPosition: s.initFloatingPosition,
+      dockPill: s.dockPill,
+      undockPill: s.undockPill,
+      setDockedSlots: s.setDockedSlots,
       setActiveProject: s.setActiveProject,
       addProject: s.addProject,
       removeProject: s.removeProject,

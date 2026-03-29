@@ -666,7 +666,6 @@ function InteractionCard({
       <div className="claude-chat__interaction claude-chat__interaction--plan">
         <div className="claude-chat__interaction-header">
           <span className="claude-chat__interaction-tool">Plan Ready</span>
-          {isResolved && <span className="claude-chat__interaction-auto-badge">auto-approved — click to change</span>}
         </div>
         {interaction.plan && (
           <div className="claude-chat__plan-content">

@@ -1,66 +1,129 @@
 .pill-bar {
   position: absolute;
-  bottom: var(--spacing-2);
-  left: var(--spacing-2);
-  right: var(--spacing-2);
+  inset: 0;
   z-index: 20;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  max-height: calc(100% - var(--tab-bar-height) - var(--spacing-2) * 2); /* leave room for tab bar */
   pointer-events: none;
+  overflow: hidden;
 }
 
-.pill-bar > * {
+/* ── Floating pill unit ── */
+.floating-pill-unit {
+  position: absolute;
   pointer-events: auto;
-}
-
-.pill-bar__row {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: var(--spacing-2);
-}
-
-/* ── Column layout ── */
-.pill-bar__columns {
-  display: flex;
-  flex-direction: row;
-  gap: var(--spacing-2);
-}
-
-.pill-bar__column {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-1);
-  justify-content: flex-end;
+  align-items: stretch;
 }
 
-.pill-bar__column-pills {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: var(--spacing-2);
+/* When panel is open, the unit becomes a unified container */
+.floating-pill-unit--unified {
+  background: rgba(8, 12, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  overflow: hidden;
 }
 
-/* ── Drag slot wrappers ── */
-.pill-bar__drag-slot {
-  display: flex;
-  flex-shrink: 0;
-  transition: transform 200ms ease, opacity 200ms ease;
+/* Inside unified unit, pill and panel lose their own borders/backgrounds */
+.floating-pill-unit--unified .pill-item--expanded {
+  background: none;
+  border: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  transition: none;
+  height: 38px;
+  min-height: 0;
 }
 
-/* Expanded pills take available space */
-.pill-bar__drag-slot:has(.pill-item--expanded) {
-  flex: 1;
-  min-width: 0;
+.floating-pill-unit--unified .pill-item__label-zone {
+  border-radius: 0;
 }
 
-.pill-bar__drag-slot--dragging {
-  z-index: 10;
-  opacity: 0.9;
+.floating-pill-unit--unified .pill-panel__content {
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
+  backdrop-filter: none;
+}
+
+.floating-pill-unit--unified .pill-panel__slot {
+  border-radius: 0;
+}
+
+/* When flipped (panel below pill), reverse the column order */
+.floating-pill-unit--flipped {
+  flex-direction: column-reverse;
+}
+
+.floating-pill-unit--flipped .pill-panel__content {
+  border-bottom: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* When flipped, hide panel's built-in resize handle (top handle on unit replaces it) */
+.floating-pill-unit--flipped .pill-panel__resize-handle {
+  display: none;
+}
+
+.floating-pill-unit__resize-handle-top {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 1;
+}
+
+
+/* ── Horizontal resize handles ── */
+.floating-pill-unit__resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+  background: transparent;
+  transition: background 150ms ease;
+}
+
+.floating-pill-unit__resize-handle:hover,
+.floating-pill-unit__resize-handle:active {
+  background: transparent;
+}
+
+.floating-pill-unit__resize-handle--left {
+  left: -3px;
+}
+
+.floating-pill-unit__resize-handle--right {
+  right: -3px;
+}
+
+.floating-pill-unit__resize-handle-bottom {
+  position: absolute;
+  bottom: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 1;
+}
+
+/* ── Dock slots ── */
+.dock-slot {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.dock-slot--hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* ── Add session button ── */
@@ -86,50 +149,6 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
-.pill-add-dropdown {
-  position: fixed;
-  transform: translateX(-100%);
-  background: rgba(16, 20, 28, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  padding: 4px;
-  z-index: 10000;
-  min-width: 180px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
-.pill-add-dropdown__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 7px;
-  background: none;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
-}
-
-.pill-add-dropdown__item:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.pill-add-dropdown__item:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.pill-add-dropdown__separator {
-  height: 1px;
-  margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
 /* Pill item — animates between expanded and collapsed */
 .pill-item {
   display: flex;
@@ -140,13 +159,12 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--text-secondary);
   backdrop-filter: blur(12px);
-  transition: flex 250ms ease, width 250ms ease, border-radius 250ms ease,
-    border-color 150ms ease, color 150ms ease, background 150ms ease;
+  transition: color 150ms ease;
 }
 
 .pill-item--expanded {
-  flex: 1;
-  border-radius: 20px;
+  width: 100%;
+  border-radius: 12px;
   padding: 0;
   gap: 0;
 }
@@ -185,7 +203,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   flex-shrink: 0;
-  border-radius: 20px 0 0 20px;
+  border-radius: 12px 0 0 12px;
   transition: color 150ms ease, background 150ms ease;
 }
 
@@ -362,16 +380,7 @@
   border-color: rgba(255, 32, 32, 0.7);
 }
 
-/* ── Panel drag wrapper (follows pill during reorder) ── */
-.pill-bar__panel-drag {
-  transition: transform 200ms ease, opacity 200ms ease;
-}
-
-.pill-bar__panel-drag--dragging {
-  opacity: 0.9;
-}
-
-/* ── Panel slot (inside column) ── */
+/* ── Panel slot (inside floating unit) ── */
 .pill-panel__slot {
   min-width: 0;
   border-radius: 12px;
@@ -391,7 +400,7 @@
 
 .pill-panel__resize-handle:hover,
 .pill-panel__resize-handle:active {
-  background: var(--accent-blue);
+  background: transparent;
 }
 
 .pill-panel__content {

@@ -11,8 +11,12 @@
   padding: var(--spacing-3);
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: var(--spacing-2);
+}
+
+.claude-chat__scroll::before {
+  content: "";
+  flex: 1;
 }
 
 /* ── Status bar (pinned to top) ── */

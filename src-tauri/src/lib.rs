@@ -1003,7 +1003,7 @@ fn interrupt_claude(
     state: State<'_, Arc<ClaudeState>>,
 ) -> Result<(), String> {
     let mut instances = state.instances.lock().unwrap();
-    if let Some(ci) = instances.remove(&key) {
+    if let Some(mut ci) = instances.remove(&key) {
         // Send SIGINT to abort the current turn. In -p mode this causes the
         // CLI to exit. We remove the instance so spawn_claude can create a
         // fresh one on the next message.

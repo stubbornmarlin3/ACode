@@ -1,11 +1,10 @@
 import "./PillBar.css";
-import { useEffect, useRef, useState, useCallback } from "react";
-import { createPortal } from "react-dom";
-import { Plus, Terminal as TerminalIcon, Github, XCircle, FolderOpen, GitFork } from "lucide-react";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { Plus, Terminal as TerminalIcon, Github, XCircle } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { tauriInvoke, tauriInvokeQuiet } from "../../services/tauri";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
-import { useLayoutStore, genSessionId, maxPanelsForWidth, type PillSession, type PillSessionType } from "../../store/layoutStore";
+import { useLayoutStore, genSessionId, maxPanelsForWidth, type PillSession, type PillSessionType, type PillFloatingState } from "../../store/layoutStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore } from "../../store/terminalStore";
@@ -265,50 +264,12 @@ export async function cleanupSession(session: PillSession) {
 }
 
 export function AddSessionButton({ projectPath }: { projectPath: string }) {
-  const [open, setOpen] = useState(false);
-  const [claudeAvailable, setClaudeAvailable] = useState(true);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
   const addPillSession = useLayoutStore((s) => s.addPillSession);
   const setActivePillId = useLayoutStore((s) => s.setActivePillId);
-  const addProject = useLayoutStore((s) => s.addProject);
-  const setActiveProject = useLayoutStore((s) => s.setActiveProject);
-  const projects = useLayoutStore((s) => s.projects.projects);
-  const setWorkspaceRoot = useEditorStore((s) => s.setWorkspaceRoot);
   const isRepo = useGitStore((s) => s.isRepo);
+  const contextMenu = useContextMenu();
 
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        btnRef.current && !btnRef.current.contains(target) &&
-        dropdownRef.current && !dropdownRef.current.contains(target)
-      ) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  useEffect(() => {
-    tauriInvoke<boolean>("check_claude_available").then(setClaudeAvailable);
-  }, []);
-
-  const handleToggle = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setPos({
-        top: rect.bottom + 6,
-        left: rect.right,
-      });
-    }
-    setOpen(!open);
-  };
-
-  const handleAdd = (type: PillSessionType) => {
+  const handleAdd = useCallback((type: PillSessionType) => {
     const id = addPillSession(type, projectPath);
     if (type === "terminal") {
       useTerminalStore.getState().setActiveKey(id);
@@ -318,174 +279,438 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
       useGitHubStore.getState().setActiveKey(id);
     }
     setActivePillId(id);
-    setOpen(false);
     persistCurrentSessions();
-  };
+  }, [addPillSession, setActivePillId, projectPath]);
 
-  const handleOpenFolder = async () => {
-    setOpen(false);
-    const state = useEditorStore.getState();
-    const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
-    const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
-    const parentDir = ws && lastSep > 0 ? ws.substring(0, lastSep) : null;
-    const selected = await tauriInvoke<string | null>("pick_folder", { defaultPath: parentDir });
-    if (!selected) return;
-    const existing = projects.find((p) => p.path === selected);
-    if (existing) {
-      setActiveProject(existing.id);
-      setWorkspaceRoot(existing.path);
-      return;
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const items: MenuEntry[] = [
+      { label: "Terminal", icon: <TerminalIcon size={12} />, action: () => handleAdd("terminal") },
+      { label: "Claude", icon: <ClaudeIcon size={12} />, action: () => handleAdd("claude") },
+    ];
+    if (isRepo) {
+      items.push({ label: "GitHub", icon: <Github size={12} />, action: () => handleAdd("github") });
     }
-    const name = selected.split(/[\\/]/).pop() ?? selected;
-    const id = selected;
-    addProject({ id, name, path: selected });
-    setActiveProject(id);
-    setWorkspaceRoot(selected);
-  };
-
-  const handleCloneRepo = () => {
-    setOpen(false);
-    useLayoutStore.getState().setCloneExplorerOpen(true);
-  };
+    contextMenu.showAt(rect.left - 4, rect.top, items, true);
+  }, [isRepo, handleAdd, contextMenu]);
 
   return (
     <>
       <button
-        ref={btnRef}
         className="pill-add-btn"
-        onClick={handleToggle}
+        onClick={handleClick}
         title="New session"
         aria-label="New session"
       >
         <Plus size={14} />
       </button>
-      {open && createPortal(
-        <div
-          ref={dropdownRef}
-          className="pill-add-dropdown"
-          style={{ top: pos.top, left: pos.left }}
-        >
-          <button className="pill-add-dropdown__item" onClick={() => handleAdd("terminal")}>
-            <TerminalIcon size={13} />
-            <span>Terminal</span>
-          </button>
-          <button
-            className="pill-add-dropdown__item"
-            onClick={() => handleAdd("claude")}
-            disabled={!claudeAvailable}
-            title={!claudeAvailable ? "Claude CLI not installed" : undefined}
-          >
-            <ClaudeIcon size={13} />
-            <span>Claude</span>
-          </button>
-          {isRepo && (
-            <button className="pill-add-dropdown__item" onClick={() => handleAdd("github")}>
-              <Github size={13} />
-              <span>GitHub</span>
-            </button>
-          )}
-          <div className="pill-add-dropdown__separator" />
-          <button className="pill-add-dropdown__item" onClick={handleOpenFolder}>
-            <FolderOpen size={13} />
-            <span>Open Folder</span>
-          </button>
-          <button className="pill-add-dropdown__item" onClick={handleCloneRepo}>
-            <GitFork size={13} />
-            <span>Clone Repository</span>
-          </button>
-        </div>,
-        document.body
+      {contextMenu.menu && (
+        <ContextMenu
+          x={contextMenu.menu.x}
+          y={contextMenu.menu.y}
+          items={contextMenu.menu.items}
+          onClose={contextMenu.close}
+          anchorBottomRight={contextMenu.menu.anchorBottomRight}
+        />
       )}
     </>
   );
 }
 
-export function PillBar() {
-  useTerminalEvents();
-  useClaudeEvents();
+/** Default width for a new floating pill */
+const DEFAULT_PILL_WIDTH = 400;
+const MIN_PILL_WIDTH = 280;
+const MAX_PILL_WIDTH_RATIO = 0.8;
+const DRAG_THRESHOLD = 8;
 
-  const pillBar = useLayoutStore((s) => s.pillBar);
-  const setActivePillId = useLayoutStore((s) => s.setActivePillId);
+/** Padding inside the editor-card bounding box */
+const BOUND_PAD = 8;
+/** Pill height (min-height from CSS) */
+const PILL_H = 40;
+
+/** Auto-position a pill when first expanded (cascade from bottom-left). */
+function autoPosition(
+  container: HTMLElement,
+  expandedCount: number,
+): { x: number; y: number; width: number } {
+  const cW = container.clientWidth;
+  const cH = container.clientHeight;
+  const width = Math.min(DEFAULT_PILL_WIDTH, cW - BOUND_PAD * 2);
+  const x = cW - width - BOUND_PAD - expandedCount * 30;
+  const y = cH - PILL_H - BOUND_PAD;
+  return {
+    x: Math.max(BOUND_PAD, Math.min(cW - width - BOUND_PAD, Math.max(BOUND_PAD, x))),
+    y: Math.max(BOUND_PAD, Math.min(cH - PILL_H - BOUND_PAD, y)),
+    width,
+  };
+}
+
+/** Clamp a floating position so the pill stays fully within the editor bounding box. */
+function clampPosition(
+  x: number,
+  y: number,
+  width: number,
+  containerW: number,
+  containerH: number,
+): { x: number; y: number } {
+  return {
+    x: Math.max(BOUND_PAD, Math.min(containerW - width - BOUND_PAD, x)),
+    y: Math.max(BOUND_PAD, Math.min(containerH - PILL_H - BOUND_PAD, y)),
+  };
+}
+
+/** Compute dock slot geometry */
+function getSlotRect(slotIndex: number, slotCount: number, containerW: number, containerH: number) {
+  const gap = 8;
+  const totalGaps = (slotCount - 1) * gap + BOUND_PAD * 2;
+  const slotW = Math.min(DEFAULT_PILL_WIDTH, (containerW - totalGaps) / slotCount);
+  const totalW = slotCount * slotW + (slotCount - 1) * gap;
+  const startX = (containerW - totalW) / 2;
+  return {
+    x: startX + slotIndex * (slotW + gap),
+    y: containerH - PILL_H - BOUND_PAD,
+    width: slotW,
+  };
+}
+
+interface FloatingPillUnitProps {
+  session: PillSession;
+  floating: PillFloatingState;
+  isPanelOpen: boolean;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onContext: (e: React.MouseEvent, session: PillSession) => void;
+  isDocked: boolean;
+  /** Called during drag with current pointer position to detect slot hover */
+  onDragMove?: (clientX: number, clientY: number) => void;
+  /** Called on drag end — returns true if pill was snapped to a slot */
+  onDragEnd?: (sessionId: string, clientX: number, clientY: number) => boolean;
+  /** Called when drag starts from a docked pill */
+  onUndock?: (sessionId: string) => void;
+}
+
+function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onContext, isDocked, onDragMove, onDragEnd, onUndock }: FloatingPillUnitProps) {
   const togglePillExpanded = useLayoutStore((s) => s.togglePillExpanded);
   const togglePanelOpen = useLayoutStore((s) => s.togglePanelOpen);
-  const setMaxPanels = useLayoutStore((s) => s.setMaxPanels);
+  const setActivePillId = useLayoutStore((s) => s.setActivePillId);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
-  const reorderSessions = useLayoutStore((s) => s.reorderSessions);
-  const isRepo = useGitStore((s) => s.isRepo);
-  const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
-  const contextMenu = useContextMenu();
-  const centerRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<ResizeObserver | null>(null);
+  const setPillPosition = useLayoutStore((s) => s.setPillPosition);
+  const setPillWidth = useLayoutStore((s) => s.setPillWidth);
+  const bringPillToFront = useLayoutStore((s) => s.bringPillToFront);
+  const panelHeight = useLayoutStore((s) => s.pillBar.panelHeights[session.id]);
+  const defaultPanelHeight = useSettingsStore((s) => s.appearance.defaultPanelHeight);
+  const height = panelHeight ?? defaultPanelHeight;
 
-  const clickSwallowRef = useRef<((e: MouseEvent) => void) | null>(null);
+  const unitRef = useRef<HTMLDivElement>(null);
+  const didDragRef = useRef(false);
 
-  // Callback ref for the pill-bar div — sets up ResizeObserver + click swallowing
-  const pillBarRef = useCallback((node: HTMLDivElement | null) => {
-    // Clean up old observer and click handler
-    if (centerRef.current && clickSwallowRef.current) {
-      centerRef.current.removeEventListener("click", clickSwallowRef.current, true);
+  // Smart panel positioning: prefer above, flip below if no room, shrink only if flip doesn't fit
+  const containerH = containerRef.current?.clientHeight ?? window.innerHeight;
+  const MIN_PANEL_H = 100;
+  let panelH = 0;
+  let flipped = false;
+  if (isPanelOpen) {
+    const spaceAbove = floating.y;
+    const spaceBelow = containerH - floating.y - PILL_H;
+    if (spaceAbove >= height) {
+      // Full panel fits above
+      panelH = height;
+    } else if (spaceBelow >= height) {
+      // Doesn't fit above, but full panel fits below — flip
+      flipped = true;
+      panelH = height;
+    } else if (spaceBelow >= spaceAbove) {
+      // Neither fits fully — flip below and shrink to fit
+      flipped = true;
+      panelH = Math.max(MIN_PANEL_H, spaceBelow);
+    } else {
+      // More room above — shrink to fit above
+      panelH = Math.max(MIN_PANEL_H, spaceAbove);
     }
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-    centerRef.current = node;
-    if (!node) return;
+  }
+  const visualTop = flipped ? floating.y : floating.y - panelH;
 
-    // ResizeObserver for maxPanels
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setMaxPanels(maxPanelsForWidth(entry.contentRect.width));
+  // ── Free-form drag ──
+  const dragState = useRef<{
+    startX: number;
+    startY: number;
+    startPosX: number;
+    startPosY: number;
+    active: boolean;
+    pointerId: number;
+  } | null>(null);
+
+  const handleDragPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT") return;
+    bringPillToFront(session.id);
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPosX: floating.x,
+      startPosY: floating.y,
+      active: false,
+      pointerId: e.pointerId,
+    };
+  }, [session.id, floating.x, floating.y, bringPillToFront]);
+
+  useEffect(() => {
+    const handleMove = (e: PointerEvent) => {
+      const ds = dragState.current;
+      if (!ds) return;
+
+      const dx = e.clientX - ds.startX;
+      const dy = e.clientY - ds.startY;
+
+      if (!ds.active) {
+        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+        ds.active = true;
+        didDragRef.current = true;
+        // Undock on first drag activation if docked
+        if (isDocked) onUndock?.(session.id);
       }
-    });
-    observer.observe(node);
-    observerRef.current = observer;
-    setMaxPanels(maxPanelsForWidth(node.clientWidth));
 
-    // Click swallowing after drag
-    const handler = (e: MouseEvent) => {
-      if (didDragRef.current) {
-        e.stopPropagation();
-        e.preventDefault();
+      // Direct DOM update for smooth drag, clamped to container
+      const el = unitRef.current;
+      const container = containerRef.current;
+      if (!el || !container) return;
+      let newX = ds.startPosX + dx;
+      let newY = ds.startPosY + dy;
+      const clamped = clampPosition(newX, newY, floating.width, container.clientWidth, container.clientHeight);
+      newX = clamped.x;
+      newY = clamped.y;
+      // Smart panel positioning during drag
+      let pH = 0;
+      let flip = false;
+      if (isPanelOpen) {
+        const cH = container.clientHeight;
+        const above = newY;
+        const below = cH - newY - PILL_H;
+        if (above >= height) {
+          pH = height;
+        } else if (below >= height) {
+          flip = true;
+          pH = height;
+        } else if (below >= above) {
+          flip = true;
+          pH = Math.max(MIN_PANEL_H, below);
+        } else {
+          pH = Math.max(MIN_PANEL_H, above);
+        }
+      }
+      el.style.left = `${newX}px`;
+      el.style.top = `${flip ? newY : newY - pH}px`;
+      // Update panel height and flip state visually during drag
+      if (isPanelOpen) {
+        const slot = el.querySelector(".pill-panel__slot") as HTMLElement | null;
+        if (slot) slot.style.height = `${pH}px`;
+        el.classList.toggle("floating-pill-unit--flipped", flip);
+      }
+      // Notify parent for slot hover detection
+      onDragMove?.(e.clientX, e.clientY);
+    };
+
+    const handleUp = (e: PointerEvent) => {
+      const ds = dragState.current;
+      if (!ds || ds.pointerId !== e.pointerId) return;
+
+      if (ds.active) {
+        // Check if dropping onto a dock slot
+        const snapped = onDragEnd?.(session.id, e.clientX, e.clientY);
+        if (!snapped) {
+          const dx = e.clientX - ds.startX;
+          const dy = e.clientY - ds.startY;
+          let newX = ds.startPosX + dx;
+          let newY = ds.startPosY + dy;
+          const container = containerRef.current;
+          if (container) {
+            const clamped = clampPosition(newX, newY, floating.width, container.clientWidth, container.clientHeight);
+            newX = clamped.x;
+            newY = clamped.y;
+          }
+          setPillPosition(session.id, newX, newY);
+        }
+        persistCurrentSessions();
+        setTimeout(() => { didDragRef.current = false; }, 50);
+      } else {
         didDragRef.current = false;
       }
+      dragState.current = null;
     };
-    clickSwallowRef.current = handler;
-    node.addEventListener("click", handler, true);
-  }, [setMaxPanels]);
 
-  // Auto-create a GitHub session when repo detected + github is in default pills but missing
-  useEffect(() => {
-    if (!isRepo || !workspaceRoot) return;
-    const layout = useLayoutStore.getState();
-    const hasGithub = layout.pillBar.sessions.some(
-      (s) => s.projectPath === workspaceRoot && s.type === "github"
-    );
-    if (hasGithub) return;
-    // Only auto-create if github is in the user's default sessions
-    const defaultSessions = useSettingsStore.getState().pills.defaultSessions;
-    if (!defaultSessions.includes("github")) return;
-    const id = genSessionId();
-    useLayoutStore.setState((s) => ({
-      pillBar: {
-        ...s.pillBar,
-        sessions: [...s.pillBar.sessions, { id, type: "github" as const, projectPath: workspaceRoot }],
-      },
-    }));
-    // Defer persist so state is settled
-    setTimeout(() => persistCurrentSessions(), 0);
-  }, [isRepo, workspaceRoot]);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [session.id, floating, isPanelOpen, height, containerRef, setPillPosition]);
 
+  // ── Horizontal resize ──
+  const handleResizePointerDown = useCallback((side: "left" | "right") => (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startWidth = floating.width;
+    const startPosX = floating.x;
 
+    const handleMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const container = containerRef.current;
+      const cW = container?.clientWidth ?? window.innerWidth;
+      let newWidth: number;
+      let newX = startPosX;
 
-  // Get sessions for current project
-  const projectSessions = pillBar.sessions.filter(
-    (s) => s.projectPath === workspaceRoot
-  );
+      if (side === "right") {
+        newWidth = startWidth + dx;
+      } else {
+        newWidth = startWidth - dx;
+        newX = startPosX + dx;
+      }
 
-  const hasOpenPanels = projectSessions.some((s) => pillBar.openPanelIds.includes(s.id));
+      const maxW = cW * MAX_PILL_WIDTH_RATIO;
+      newWidth = Math.max(MIN_PILL_WIDTH, Math.min(maxW, newWidth));
 
-  const handlePillClick = (session: PillSession) => {
+      // Recalculate newX for left handle after clamping
+      if (side === "left") {
+        newX = startPosX + (startWidth - newWidth);
+      }
+
+      // Clamp so pill stays within bounds
+      if (newX < BOUND_PAD) {
+        newWidth = newWidth - (BOUND_PAD - newX);
+        newX = BOUND_PAD;
+        newWidth = Math.max(MIN_PILL_WIDTH, newWidth);
+      }
+      if (newX + newWidth > cW - BOUND_PAD) {
+        newWidth = cW - BOUND_PAD - newX;
+        newWidth = Math.max(MIN_PILL_WIDTH, newWidth);
+      }
+
+      // Direct DOM update
+      const el = unitRef.current;
+      if (el) {
+        el.style.width = `${newWidth}px`;
+        el.style.left = `${newX}px`;
+      }
+    };
+
+    const handleUp = () => {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleUp);
+      target.removeEventListener("pointercancel", handleUp);
+
+      const el = unitRef.current;
+      if (el) {
+        const finalWidth = parseFloat(el.style.width) || startWidth;
+        const finalX = parseFloat(el.style.left) || startPosX;
+        setPillWidth(session.id, Math.round(finalWidth));
+        if (side === "left") {
+          setPillPosition(session.id, finalX, floating.y);
+        }
+        persistCurrentSessions();
+      }
+    };
+
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleUp);
+    target.addEventListener("pointercancel", handleUp);
+  }, [session.id, floating, containerRef, setPillWidth, setPillPosition]);
+
+  // Click swallowing after drag
+  const handleClickCapture = useCallback((e: React.MouseEvent) => {
+    if (didDragRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, []);
+
+  // ── Bottom resize (panel height from below) ──
+  const handleBottomResizePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    let startY = e.clientY;
+    let currentHeight = height;
+    const startPillY = floating.y;
+    const isFlipped = unitRef.current?.classList.contains("floating-pill-unit--flipped") ?? false;
+
+    const handleMove = (ev: PointerEvent) => {
+      const delta = ev.clientY - startY; // dragging down = increase height
+      startY = ev.clientY;
+      const next = Math.max(100, Math.min(window.innerHeight * 0.85, currentHeight + delta));
+      currentHeight = next;
+      const unit = unitRef.current;
+      if (!unit) return;
+      const slot = unit.querySelector(".pill-panel__slot") as HTMLElement | null;
+      if (slot) slot.style.height = `${next}px`;
+    };
+
+    const handleUp = () => {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleUp);
+      target.removeEventListener("pointercancel", handleUp);
+      useLayoutStore.getState().setPanelHeight(session.id, Math.round(currentHeight));
+      if (!isFlipped) {
+        // Only shift pill y when panel is above (not flipped)
+        const heightDelta = Math.round(currentHeight) - height;
+        setPillPosition(session.id, floating.x, startPillY + heightDelta);
+      }
+      persistCurrentSessions();
+    };
+
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleUp);
+    target.addEventListener("pointercancel", handleUp);
+  }, [session.id, height, floating.x, floating.y, setPillPosition]);
+
+  // ── Top resize (used when flipped — panel below, resize from above pill) ──
+  const handleTopResizePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    let startY = e.clientY;
+    let currentHeight = height;
+
+    const handleMove = (ev: PointerEvent) => {
+      const delta = startY - ev.clientY; // dragging up = increase height
+      startY = ev.clientY;
+      const prev = currentHeight;
+      const next = Math.max(100, Math.min(window.innerHeight * 0.85, prev + delta));
+      currentHeight = next;
+      const unit = unitRef.current;
+      if (!unit) return;
+      const slot = unit.querySelector(".pill-panel__slot") as HTMLElement | null;
+      if (slot) slot.style.height = `${next}px`;
+      // Move unit top up so pill stays in place
+      const currentTop = parseFloat(unit.style.top) || 0;
+      unit.style.top = `${currentTop - (next - prev)}px`;
+    };
+
+    const handleUp = () => {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleUp);
+      target.removeEventListener("pointercancel", handleUp);
+      const heightDelta = Math.round(currentHeight) - height;
+      useLayoutStore.getState().setPanelHeight(session.id, Math.round(currentHeight));
+      // Shift pill y up so visualTop stays correct after re-render
+      setPillPosition(session.id, floating.x, floating.y - heightDelta);
+      persistCurrentSessions();
+    };
+
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleUp);
+    target.addEventListener("pointercancel", handleUp);
+  }, [session.id, height, floating.x, floating.y, setPillPosition]);
+
+  const handlePillClick = () => {
     setActivePillId(session.id);
     if (session.type === "terminal") {
       useTerminalStore.getState().setActiveKey(session.id);
@@ -496,9 +721,216 @@ export function PillBar() {
     }
   };
 
-  const handleLabelClick = (sessionId: string) => {
-    togglePanelOpen(sessionId);
+  const handleLabelClick = () => {
+    if (didDragRef.current) return;
+    togglePanelOpen(session.id);
   };
+
+  return (
+    <div
+      ref={unitRef}
+      className={`floating-pill-unit${isPanelOpen ? " floating-pill-unit--unified" : ""}${flipped ? " floating-pill-unit--flipped" : ""}`}
+      style={{
+        left: floating.x,
+        top: visualTop,
+        width: floating.width,
+        zIndex: floating.zIndex,
+      }}
+      onPointerDown={() => bringPillToFront(session.id)}
+      onClickCapture={handleClickCapture}
+      onContextMenu={(e) => onContext(e, session)}
+    >
+      {/* Panel — CSS column-reverse handles flipping */}
+      {isPanelOpen && (
+        <PillPanel sessionId={session.id} mode={session.type} effectiveHeight={panelH} />
+      )}
+
+      {/* Pill — drag handle is the label zone */}
+      <div onPointerDown={handleDragPointerDown}>
+        <PillItem
+          sessionId={session.id}
+          sessionType={session.type}
+          isExpanded={true}
+          onCollapsedClick={handlePillClick}
+          onLabelClick={handleLabelClick}
+          onCollapse={() => togglePillExpanded(session.id)}
+          onRemove={async () => {
+            removePillSession(session.id);
+            await cleanupSession(session);
+            persistCurrentSessions();
+          }}
+        />
+      </div>
+
+      {/* Top resize handle (only when flipped) */}
+      {isPanelOpen && flipped && (
+        <div
+          className="floating-pill-unit__resize-handle-top"
+          onPointerDown={handleTopResizePointerDown}
+        />
+      )}
+
+      {/* Bottom panel resize handle (only when panel open) */}
+      {isPanelOpen && (
+        <div
+          className="floating-pill-unit__resize-handle-bottom"
+          onPointerDown={handleBottomResizePointerDown}
+        />
+      )}
+
+      {/* Horizontal resize handles */}
+      <div
+        className="floating-pill-unit__resize-handle floating-pill-unit__resize-handle--left"
+        onPointerDown={handleResizePointerDown("left")}
+      />
+      <div
+        className="floating-pill-unit__resize-handle floating-pill-unit__resize-handle--right"
+        onPointerDown={handleResizePointerDown("right")}
+      />
+    </div>
+  );
+}
+
+export function PillBar() {
+  useTerminalEvents();
+  useClaudeEvents();
+
+  const pillBar = useLayoutStore((s) => s.pillBar);
+  const setMaxPanels = useLayoutStore((s) => s.setMaxPanels);
+  const removePillSession = useLayoutStore((s) => s.removePillSession);
+  const initFloatingPosition = useLayoutStore((s) => s.initFloatingPosition);
+  const isRepo = useGitStore((s) => s.isRepo);
+  const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
+  const contextMenu = useContextMenu();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  // Callback ref for the pill-bar div — sets up ResizeObserver
+  const pillBarRef = useCallback((node: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    containerRef.current = node;
+    if (!node) return;
+
+    // ResizeObserver — still used for maxPanels + clamping floating positions
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setMaxPanels(maxPanelsForWidth(entry.contentRect.width));
+      }
+    });
+    observer.observe(node);
+    observerRef.current = observer;
+    setMaxPanels(maxPanelsForWidth(node.clientWidth));
+  }, [setMaxPanels]);
+
+  // Auto-create a GitHub session when repo detected + github is in default pills but missing
+  useEffect(() => {
+    if (!isRepo || !workspaceRoot) return;
+    const layout = useLayoutStore.getState();
+    const hasGithub = layout.pillBar.sessions.some(
+      (s) => s.projectPath === workspaceRoot && s.type === "github"
+    );
+    if (hasGithub) return;
+    const defaultSessions = useSettingsStore.getState().pills.defaultSessions;
+    if (!defaultSessions.includes("github")) return;
+    const id = genSessionId();
+    useLayoutStore.setState((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        sessions: [...s.pillBar.sessions, { id, type: "github" as const, projectPath: workspaceRoot }],
+      },
+    }));
+    setTimeout(() => persistCurrentSessions(), 0);
+  }, [isRepo, workspaceRoot]);
+
+  const dockPill = useLayoutStore((s) => s.dockPill);
+  const undockPill = useLayoutStore((s) => s.undockPill);
+  const [hoverSlot, setHoverSlot] = useState<number | null>(null);
+
+  // Get sessions for current project
+  const projectSessions = pillBar.sessions.filter(
+    (s) => s.projectPath === workspaceRoot
+  );
+
+  const expandedSessions = projectSessions.filter((s) => pillBar.expandedPillIds.includes(s.id));
+  const dockedIds = new Set(pillBar.dockedSlots.filter(Boolean) as string[]);
+  const floatingSessions = expandedSessions.filter((s) => !dockedIds.has(s.id));
+
+  // Auto-initialize floating positions for expanded floating (non-docked) pills
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let posIdx = 0;
+    for (const session of floatingSessions) {
+      if (!pillBar.floatingPositions[session.id]) {
+        const pos = autoPosition(container, posIdx);
+        initFloatingPosition(session.id, pos.x, pos.y, pos.width);
+      }
+      posIdx++;
+    }
+  }, [floatingSessions.map((s) => s.id).join(","), initFloatingPosition]);
+
+  // Auto-dock expanded pills that aren't docked or floating yet (e.g. on restore)
+  useEffect(() => {
+    for (const session of expandedSessions) {
+      if (!dockedIds.has(session.id) && !pillBar.floatingPositions[session.id]) {
+        const emptySlot = pillBar.dockedSlots.indexOf(null);
+        if (emptySlot >= 0) {
+          dockPill(session.id, emptySlot);
+        }
+      }
+    }
+  }, [expandedSessions.map((s) => s.id).join(",")]);
+
+  /** Find which dock slot (if any) a screen coordinate hits */
+  const hitTestSlot = useCallback((clientX: number, clientY: number): number | null => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+    const cW = container.clientWidth;
+    const cH = container.clientHeight;
+    for (let i = 0; i < pillBar.dockedSlots.length; i++) {
+      const slot = getSlotRect(i, pillBar.dockedSlots.length, cW, cH);
+      if (
+        localX >= slot.x - 10 && localX <= slot.x + slot.width + 10 &&
+        localY >= slot.y - 20 && localY <= slot.y + PILL_H + 20
+      ) {
+        return i;
+      }
+    }
+    return null;
+  }, [pillBar.dockedSlots.length]);
+
+  const handleDragMove = useCallback((clientX: number, clientY: number) => {
+    const slot = hitTestSlot(clientX, clientY);
+    setHoverSlot(slot);
+  }, [hitTestSlot]);
+
+  const handleDragEnd = useCallback((sessionId: string, clientX: number, clientY: number): boolean => {
+    setHoverSlot(null);
+    const slot = hitTestSlot(clientX, clientY);
+    if (slot !== null && pillBar.dockedSlots[slot] === null) {
+      dockPill(sessionId, slot);
+      return true;
+    }
+    return false;
+  }, [hitTestSlot, dockPill, pillBar.dockedSlots]);
+
+  const handleUndock = useCallback((sessionId: string) => {
+    undockPill(sessionId);
+    // Initialize a floating position at the pill's current dock slot location
+    const container = containerRef.current;
+    if (!container) return;
+    const slotIdx = pillBar.dockedSlots.indexOf(sessionId);
+    if (slotIdx >= 0) {
+      const slot = getSlotRect(slotIdx, pillBar.dockedSlots.length, container.clientWidth, container.clientHeight);
+      initFloatingPosition(sessionId, slot.x, slot.y, slot.width);
+    }
+  }, [undockPill, initFloatingPosition, pillBar.dockedSlots]);
 
   // ── Context menu ──
   const handlePillContext = useCallback(
@@ -531,209 +963,72 @@ export function PillBar() {
     [contextMenu, removePillSession]
   );
 
-  // ── Pointer-based drag reorder ──
-  const dragState = useRef<{
-    index: number;
-    startX: number;
-    active: boolean;
-    pointerId: number;
-    slotRects: DOMRect[];
-  } | null>(null);
-  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const dragOverIndexRef = useRef<number | null>(null);
-  const [dragOffsetX, setDragOffsetX] = useState(0);
-  const [suppressTransition, setSuppressTransition] = useState(false);
-  const rowRef = useRef<HTMLDivElement>(null);
-  const didDragRef = useRef(false);
-
-  const DRAG_THRESHOLD = 8; // px before drag activates
-
-
-  const handlePointerDown = useCallback(
-    (index: number) => (e: React.PointerEvent) => {
-      // Only left button; ignore if target is interactive (input, textarea, button)
-      if (e.button !== 0) return;
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "TEXTAREA" || tag === "INPUT") return;
-
-      dragState.current = {
-        index,
-        startX: e.clientX,
-        active: false,
-        pointerId: e.pointerId,
-        slotRects: [],
-      };
-    },
-    []
-  );
-
-  useEffect(() => {
-    const handleMove = (e: PointerEvent) => {
-      const ds = dragState.current;
-      if (!ds) return;
-
-      if (!ds.active) {
-        if (Math.abs(e.clientX - ds.startX) < DRAG_THRESHOLD) return;
-        // Activate drag — capture pointer and snapshot slot positions
-        ds.active = true;
-        const row = rowRef.current;
-        if (row) {
-          ds.slotRects = Array.from(row.querySelectorAll<HTMLElement>(".pill-bar__drag-slot"))
-            .map((el) => el.getBoundingClientRect());
-        }
-        setDragFromIndex(ds.index);
-      }
-
-      // Track how far the dragged pill has moved from its origin
-      const offsetX = e.clientX - ds.startX;
-      setDragOffsetX(offsetX);
-
-      // Use leading edge of dragged pill to determine drop target
-      const dragRect = ds.slotRects[ds.index];
-      const draggedLeft = dragRect.left + offsetX;
-      const draggedRight = dragRect.right + offsetX;
-      let overIdx = ds.index;
-      if (offsetX > 0) {
-        // Dragging right — right edge passing a slot's left edge triggers swap
-        for (let i = ds.index + 1; i < ds.slotRects.length; i++) {
-          if (draggedRight > ds.slotRects[i].left + ds.slotRects[i].width * 0.3) overIdx = i;
-        }
-      } else {
-        // Dragging left — left edge passing a slot's right edge triggers swap
-        for (let i = ds.index - 1; i >= 0; i--) {
-          if (draggedLeft < ds.slotRects[i].right - ds.slotRects[i].width * 0.3) overIdx = i;
-        }
-      }
-      dragOverIndexRef.current = overIdx;
-      setDragOverIndex(overIdx);
-    };
-
-    const handleUp = (e: PointerEvent) => {
-      const ds = dragState.current;
-      if (!ds) return;
-      if (ds.pointerId !== e.pointerId) return;
-
-      if (ds.active) {
-        didDragRef.current = true;
-        // Auto-clear after a tick in case no click event fires to consume it
-        setTimeout(() => { didDragRef.current = false; }, 50);
-        const overIdx = dragOverIndexRef.current ?? ds.index;
-        if (overIdx !== ds.index && workspaceRoot) {
-          reorderSessions(workspaceRoot, ds.index, overIdx);
-          persistCurrentSessions();
-        }
-      }
-      // Clear all drag state in one batch, suppress transitions
-      dragState.current = null;
-      setSuppressTransition(true);
-      setDragFromIndex(null);
-      dragOverIndexRef.current = null;
-      setDragOverIndex(null);
-      setDragOffsetX(0);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setSuppressTransition(false));
-      });
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-  }, [workspaceRoot, reorderSessions]);
-
-  /** Returns [className, inlineStyle] for a drag slot */
-  const getSlotProps = (index: number): [string, React.CSSProperties | undefined] => {
-    const base = "pill-bar__drag-slot";
-    const noTransition: React.CSSProperties = { transition: "none" };
-
-    // No drag active
-    if (dragFromIndex === null || dragOverIndex === null) {
-      return [base, suppressTransition ? noTransition : undefined];
-    }
-
-    // The dragged element itself — follows pointer
-    if (dragFromIndex === index) {
-      return [
-        base + " pill-bar__drag-slot--dragging",
-        { transform: `translateX(${dragOffsetX}px)`, zIndex: 10, ...noTransition },
-      ];
-    }
-
-    // Compute shift: items between source and target shift by the dragged element's width + gap
-    const rects = dragState.current?.slotRects;
-    if (!rects) return [base, suppressTransition ? noTransition : undefined];
-    const from = dragFromIndex;
-    const to = dragOverIndex;
-    const gap = 8; // matches var(--spacing-2)
-    const dragWidth = rects[from].width + gap;
-
-    let shift = 0;
-    if (from < to && index > from && index <= to) {
-      shift = -dragWidth;
-    } else if (from > to && index >= to && index < from) {
-      shift = dragWidth;
-    }
-    if (shift === 0) return [base, undefined];
-    return [base, { transform: `translateX(${shift}px)` }];
-  };
-
   if (projectSessions.length === 0) return null;
-
-  // Split sessions into expanded (left) and collapsed (right)
-  const expandedSessions = projectSessions.filter((s) => pillBar.expandedPillIds.includes(s.id));
-
-  // Collapsed pills now live on the ProjectsRail — if nothing expanded, hide pill bar
   if (expandedSessions.length === 0) return null;
 
+  const slotCount = pillBar.dockedSlots.length;
+  const cW = containerRef.current?.clientWidth ?? 0;
+  const cH = containerRef.current?.clientHeight ?? 0;
+
   return (
-    <div className="pill-bar" data-pill-state={hasOpenPanels ? "panel-open" : "idle"} ref={pillBarRef}>
-      <div className="pill-bar__columns" ref={rowRef}>
-        {expandedSessions.map((session) => {
-          const origIndex = projectSessions.indexOf(session);
-          const [slotClass, slotStyle] = getSlotProps(origIndex);
-          return (
-            <div key={session.id} className="pill-bar__column">
-              {/* Panel for this column — renders above pills */}
-              {pillBar.openPanelIds.includes(session.id) && (
-                <div
-                  className={dragFromIndex === origIndex ? "pill-bar__panel-drag pill-bar__panel-drag--dragging" : "pill-bar__panel-drag"}
-                  style={slotStyle}
-                >
-                  <PillPanel sessionId={session.id} mode={session.type} />
-                </div>
-              )}
-              {/* Pill row for this column */}
-              <div className="pill-bar__column-pills">
-                <div
-                  className={slotClass}
-                  style={slotStyle}
-                  onPointerDown={handlePointerDown(origIndex)}
-                  onContextMenu={(e) => handlePillContext(e, session)}
-                >
-                  <PillItem
-                    sessionId={session.id}
-                    sessionType={session.type}
-                    isExpanded={true}
-                    onCollapsedClick={() => handlePillClick(session)}
-                    onLabelClick={() => handleLabelClick(session.id)}
-                    onCollapse={() => togglePillExpanded(session.id)}
-                    onRemove={async () => {
-                      removePillSession(session.id);
-                      await cleanupSession(session);
-                      persistCurrentSessions();
-                    }}
-                  />
-                </div>
-                {/* Collapsed pills now live on the ProjectsRail */}
-              </div>
-            </div>
-          );
-        })}
-        {/* Collapsed pills now live on the ProjectsRail */}
-      </div>
+    <div className="pill-bar" ref={pillBarRef}>
+      {/* Dock slot outlines */}
+      {slotCount > 0 && cW > 0 && pillBar.dockedSlots.map((slotId, i) => {
+        if (slotId) return null; // occupied slots don't show outline
+        const slot = getSlotRect(i, slotCount, cW, cH);
+        return (
+          <div
+            key={`slot-${i}`}
+            className={`dock-slot${hoverSlot === i ? " dock-slot--hover" : ""}`}
+            style={{ left: slot.x, top: slot.y, width: slot.width, height: PILL_H }}
+          />
+        );
+      })}
+
+      {/* Docked pills — positioned at their slot */}
+      {pillBar.dockedSlots.map((slotId, i) => {
+        if (!slotId) return null;
+        const session = expandedSessions.find((s) => s.id === slotId);
+        if (!session) return null;
+        const slot = getSlotRect(i, slotCount, cW, cH);
+        const dockedFloating: PillFloatingState = { x: slot.x, y: slot.y, width: slot.width, zIndex: 0 };
+        return (
+          <FloatingPillUnit
+            key={session.id}
+            session={session}
+            floating={dockedFloating}
+            isPanelOpen={pillBar.openPanelIds.includes(session.id)}
+            containerRef={containerRef}
+            onContext={handlePillContext}
+            isDocked={true}
+
+            onDragMove={handleDragMove}
+            onDragEnd={handleDragEnd}
+            onUndock={handleUndock}
+          />
+        );
+      })}
+
+      {/* Floating pills */}
+      {floatingSessions.map((session) => {
+        const floating = pillBar.floatingPositions[session.id];
+        if (!floating) return null;
+        return (
+          <FloatingPillUnit
+            key={session.id}
+            session={session}
+            floating={floating}
+            isPanelOpen={pillBar.openPanelIds.includes(session.id)}
+            containerRef={containerRef}
+            onContext={handlePillContext}
+            isDocked={false}
+
+            onDragMove={handleDragMove}
+            onDragEnd={handleDragEnd}
+          />
+        );
+      })}
+
       {contextMenu.menu && (
         <ContextMenu
           x={contextMenu.menu.x}

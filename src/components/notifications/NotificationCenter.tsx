@@ -80,23 +80,27 @@ function NotificationItem({ notification, onNavigate }: { notification: AppNotif
 
 interface NotificationCenterPanelProps {
   anchorRect: DOMRect;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
 }
 
-export function NotificationCenterPanel({ anchorRect, onClose }: NotificationCenterPanelProps) {
+export function NotificationCenterPanel({ anchorRect, anchorRef, onClose }: NotificationCenterPanelProps) {
   const notifications = useNotificationStore((s) => s.notifications);
   const clearAll = useNotificationStore((s) => s.clearAll);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      // Ignore clicks on the bell button itself (toggle is handled by the bell)
+      if (anchorRef.current?.contains(target)) return;
+      if (panelRef.current && !panelRef.current.contains(target)) {
         onClose();
       }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [onClose]);
+  }, [onClose, anchorRef]);
 
   const handleNavigate = (n: AppNotification) => {
     const layout = useLayoutStore.getState();
@@ -127,11 +131,11 @@ export function NotificationCenterPanel({ anchorRect, onClose }: NotificationCen
 
   const grouped = groupByDay(notifications);
 
-  // Position to the left of the bell icon, anchored at bottom growing upward
+  // Position below the bell icon, right-aligned with button
   const style: React.CSSProperties = {
     position: "fixed",
-    bottom: window.innerHeight - anchorRect.bottom,
-    right: window.innerWidth - anchorRect.left + 8,
+    top: anchorRect.bottom + 6,
+    right: window.innerWidth - anchorRect.right,
     maxHeight: "min(500px, 70vh)",
   };
 
@@ -207,6 +211,7 @@ export function NotificationBell() {
       {centerOpen && bellRef.current && (
         <NotificationCenterPanel
           anchorRect={bellRef.current.getBoundingClientRect()}
+          anchorRef={bellRef}
           onClose={() => setCenterOpen(false)}
         />
       )}
