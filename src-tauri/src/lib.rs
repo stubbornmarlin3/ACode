@@ -12,7 +12,125 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use std::collections::HashSet;
 use tauri::{Emitter, Manager, State};
+
+// ── Workspace path validation ──────────────────────────────────────
+
+struct WorkspaceState {
+    roots: Mutex<HashSet<PathBuf>>,
+}
+
+impl Default for WorkspaceState {
+    fn default() -> Self {
+        Self {
+            roots: Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+/// Canonicalize a path, walking up to the deepest existing ancestor for new paths.
+fn resolve_canonical(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return path.canonicalize().map_err(|e| format!("Failed to resolve path: {}", e));
+    }
+
+    let mut existing = path.to_path_buf();
+    let mut tail_parts = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            tail_parts.push(name.to_os_string());
+        } else {
+            return Err(format!("Cannot resolve path: {}", path.display()));
+        }
+        existing = existing
+            .parent()
+            .ok_or_else(|| format!("Cannot resolve path: {}", path.display()))?
+            .to_path_buf();
+    }
+
+    let mut canonical = existing
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve path: {}", e))?;
+
+    for part in tail_parts.into_iter().rev() {
+        canonical.push(part);
+    }
+
+    Ok(canonical)
+}
+
+/// Validate that a path resolves under one of the registered workspace roots.
+fn validate_path(path: &str, state: &WorkspaceState) -> Result<PathBuf, String> {
+    if path.contains('\0') {
+        return Err("Path contains null byte".to_string());
+    }
+
+    let canonical = resolve_canonical(Path::new(path))?;
+
+    let roots = state.roots.lock().unwrap();
+    // If no roots registered yet (startup), allow all paths
+    if roots.is_empty() {
+        return Ok(canonical);
+    }
+
+    for root in roots.iter() {
+        if canonical.starts_with(root) {
+            return Ok(canonical);
+        }
+    }
+
+    Err(format!(
+        "Path '{}' is outside allowed workspace roots",
+        path
+    ))
+}
+
+#[tauri::command]
+fn register_workspace_root(
+    path: String,
+    state: State<'_, Arc<WorkspaceState>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let canonical = Path::new(&path)
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve workspace root: {}", e))?;
+
+    let mut roots = state.roots.lock().unwrap();
+
+    // Seed system roots on first registration
+    if roots.is_empty() {
+        if let Ok(config_dir) = app.path().app_config_dir() {
+            // App config dir may not exist yet — create it
+            let _ = fs::create_dir_all(&config_dir);
+            if let Ok(c) = config_dir.canonicalize() {
+                roots.insert(c);
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            let claude_dir = home.join(".claude");
+            let _ = fs::create_dir_all(&claude_dir);
+            if let Ok(c) = claude_dir.canonicalize() {
+                roots.insert(c);
+            }
+        }
+    }
+
+    roots.insert(canonical);
+    Ok(())
+}
+
+#[tauri::command]
+fn unregister_workspace_root(
+    path: String,
+    state: State<'_, Arc<WorkspaceState>>,
+) -> Result<(), String> {
+    if let Ok(canonical) = Path::new(&path).canonicalize() {
+        let mut roots = state.roots.lock().unwrap();
+        roots.remove(&canonical);
+    }
+    Ok(())
+}
 
 /// Resolve a shell path to a native executable path.
 /// On Windows, this handles:
@@ -112,11 +230,12 @@ fn pick_folder(default_path: Option<String>) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn save_file(path: String, content: String) -> Result<(), String> {
-    if let Some(parent) = Path::new(&path).parent() {
+fn save_file(path: String, content: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated = validate_path(&path, &ws)?;
+    if let Some(parent) = validated.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create dirs: {}", e))?;
     }
-    fs::write(&path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+    fs::write(&validated, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
 }
 
 #[tauri::command]
@@ -136,34 +255,38 @@ fn get_home_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn create_file(path: String) -> Result<(), String> {
-    if Path::new(&path).exists() {
+fn create_file(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated = validate_path(&path, &ws)?;
+    if validated.exists() {
         return Err(format!("Already exists: {}", path));
     }
-    fs::write(&path, "").map_err(|e| format!("Failed to create file: {}", e))
+    fs::write(&validated, "").map_err(|e| format!("Failed to create file: {}", e))
 }
 
 #[tauri::command]
-fn create_dir(path: String) -> Result<(), String> {
-    if Path::new(&path).exists() {
+fn create_dir(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated = validate_path(&path, &ws)?;
+    if validated.exists() {
         return Err(format!("Already exists: {}", path));
     }
-    fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))
+    fs::create_dir_all(&validated).map_err(|e| format!("Failed to create directory: {}", e))
 }
 
 #[tauri::command]
-fn delete_path(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
-    if p.is_dir() {
-        fs::remove_dir_all(p).map_err(|e| format!("Failed to delete: {}", e))
+fn delete_path(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated = validate_path(&path, &ws)?;
+    if validated.is_dir() {
+        fs::remove_dir_all(&validated).map_err(|e| format!("Failed to delete: {}", e))
     } else {
-        fs::remove_file(p).map_err(|e| format!("Failed to delete: {}", e))
+        fs::remove_file(&validated).map_err(|e| format!("Failed to delete: {}", e))
     }
 }
 
 #[tauri::command]
-fn rename_path(old_path: String, new_path: String) -> Result<(), String> {
-    fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename: {}", e))
+fn rename_path(old_path: String, new_path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated_old = validate_path(&old_path, &ws)?;
+    let validated_new = validate_path(&new_path, &ws)?;
+    fs::rename(&validated_old, &validated_new).map_err(|e| format!("Failed to rename: {}", e))
 }
 
 #[tauri::command]
@@ -262,8 +385,9 @@ async fn read_dir_tree(path: String, max_depth: Option<u32>) -> Result<Vec<FileE
 }
 
 #[tauri::command]
-fn read_file_contents(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
+fn read_file_contents(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<String, String> {
+    let validated = validate_path(&path, &ws)?;
+    fs::read_to_string(&validated).map_err(|e| format!("Failed to read {}: {}", path, e))
 }
 
 #[tauri::command]
@@ -1070,11 +1194,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(Arc::new(WorkspaceState::default()))
         .manage(Arc::new(TerminalState::default()))
         .manage(Arc::new(ClaudeState::default()))
         .manage(Arc::new(git::github::GitHubState::default()))
         .manage(Arc::new(FsWatcherState::default()))
         .invoke_handler(tauri::generate_handler![
+            register_workspace_root,
+            unregister_workspace_root,
             read_dir_tree,
             read_file_contents,
             resolve_project_icon,
@@ -1140,14 +1267,16 @@ pub fn run() {
             unwatch_directory,
         ])
         .setup(|app| {
-            let window = app.get_webview_window("main").unwrap();
+            let window = app.get_webview_window("main")
+                .ok_or("Main window not found during setup")?;
 
             // macOS: apply native vibrancy (real NSVisualEffectView)
             #[cfg(target_os = "macos")]
             {
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                apply_vibrancy(&window, NSVisualEffectMaterial::UnderWindowBackground, None, None)
-                    .expect("Failed to apply vibrancy");
+                if let Err(e) = apply_vibrancy(&window, NSVisualEffectMaterial::UnderWindowBackground, None, None) {
+                    eprintln!("Warning: failed to apply vibrancy: {e}");
+                }
             }
 
             // Windows: apply acrylic blur and remove native decorations
@@ -1155,9 +1284,12 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 use window_vibrancy::apply_acrylic;
-                apply_acrylic(&window, Some((10, 15, 22, 200)))
-                    .expect("Failed to apply acrylic");
-                window.set_decorations(false).unwrap();
+                if let Err(e) = apply_acrylic(&window, Some((10, 15, 22, 200))) {
+                    eprintln!("Warning: failed to apply acrylic: {e}");
+                }
+                if let Err(e) = window.set_decorations(false) {
+                    eprintln!("Warning: failed to remove decorations: {e}");
+                }
             }
 
             Ok(())

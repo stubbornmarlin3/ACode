@@ -1,8 +1,8 @@
 # Critical / Security
-- [ ] Add CSP to tauri.conf.json (currently `"csp": null` - XSS attack surface wide open)
-- [ ] Validate file paths in Rust commands against workspace root (save_file, delete_path, read_file_contents, rename_path all accept arbitrary paths - directory traversal risk)
-- [ ] Replace `unwrap()` calls in lib.rs setup handler with proper error handling (lines 1143, 1160 - panics crash the entire app)
-- [ ] Validate MCP server commands before execution (mcpStore passes untrusted command strings to Tauri invoke)
+- [x] Add CSP to tauri.conf.json (currently `"csp": null` - XSS attack surface wide open)
+- [x] Validate file paths in Rust commands against workspace root (save_file, delete_path, read_file_contents, rename_path all accept arbitrary paths - directory traversal risk)
+- [x] Replace `unwrap()` calls in lib.rs setup handler with proper error handling (lines 1143, 1160 - panics crash the entire app)
+- [x] Validate MCP server commands before execution (mcpStore passes untrusted command strings to Tauri invoke)
 
 # Performance
 - [ ] Use CodeMirror Compartments instead of destroying/recreating EditorView on file switch (expensive DOM teardown on every tab change)
@@ -23,7 +23,7 @@
 - [ ] Extract context menu builders from FileExplorer.tsx and EditorPane.tsx (70-90 lines inline each)
 - [ ] Add proper error handling to cross-store setState calls in editorStore.setWorkspaceRoot (one store failing silently breaks downstream state)
 - [ ] Replace unsafe libc::kill with nix crate for signal handling (lib.rs line 886)
-- [ ] Add bounds on terminal command history (grows indefinitely per project - no max limit) 
+- [ ] Add bounds on terminal command history (grows indefinitely per project - no max limit)
 
 # Zustand Best Practices
 - [ ] Export custom hooks from stores instead of raw store access (prevents accidental whole-store subscriptions)

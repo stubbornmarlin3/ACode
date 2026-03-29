@@ -244,6 +244,47 @@ function scheduleSave(key: string, fn: () => Promise<void>) {
   _saveTimers[key] = setTimeout(() => fn().catch(() => {}), 300);
 }
 
+// Shell metacharacters that could enable command injection
+const SHELL_METACHAR_RE = /[;&|`$(){}!<>]/;
+
+/**
+ * Validate an MCP server transport config before saving.
+ * Rejects shell metacharacters in stdio commands/args and non-http(s) URLs.
+ */
+function validateTransport(transport: McpTransport): string | null {
+  if (transport.type === "stdio") {
+    const cmd = transport.command;
+    if (!cmd || !cmd.trim()) return "Command is required";
+    if (SHELL_METACHAR_RE.test(cmd)) return `Command contains disallowed shell characters: ${cmd}`;
+    if (cmd.includes("..")) return "Command must not contain path traversal (..)";
+
+    if (transport.args) {
+      for (const arg of transport.args) {
+        if (SHELL_METACHAR_RE.test(arg)) return `Argument contains disallowed shell characters: ${arg}`;
+      }
+    }
+
+    if (transport.env) {
+      for (const [key, value] of Object.entries(transport.env)) {
+        if (SHELL_METACHAR_RE.test(key)) return `Env var key contains disallowed characters: ${key}`;
+        if (SHELL_METACHAR_RE.test(value)) return `Env var value contains disallowed characters: ${value}`;
+      }
+    }
+  } else {
+    const url = transport.url;
+    if (!url || !url.trim()) return "URL is required";
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return `URL must use http or https protocol, got: ${parsed.protocol}`;
+      }
+    } catch {
+      return `Invalid URL: ${url}`;
+    }
+  }
+  return null;
+}
+
 function generateId(name: string): string {
   return name
     .toLowerCase()
@@ -346,6 +387,9 @@ export const useMcpStore = create<McpStore>()((set, get) => ({
   },
 
   addServer: async (config) => {
+    const validationError = validateTransport(config.transport);
+    if (validationError) throw new Error(validationError);
+
     const id = generateId(config.name);
     const server: McpServerConfig = { ...config, id };
     const state = get();
@@ -379,6 +423,11 @@ export const useMcpStore = create<McpStore>()((set, get) => ({
   },
 
   updateServer: async (id, partial) => {
+    if (partial.transport) {
+      const validationError = validateTransport(partial.transport);
+      if (validationError) throw new Error(validationError);
+    }
+
     const state = get();
 
     // Find which source owns this server and update it

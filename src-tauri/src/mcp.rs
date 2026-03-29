@@ -1,3 +1,36 @@
+/// Characters disallowed in MCP stdio command names (shell metacharacters).
+fn contains_shell_metachar(s: &str) -> bool {
+    s.chars().any(|c| matches!(c, ';' | '&' | '|' | '`' | '$' | '(' | ')' | '{' | '}' | '!' | '<' | '>'))
+}
+
+/// Validate an MCP command string before using it.
+fn validate_mcp_command(cmd: &str) -> Result<(), String> {
+    if cmd.is_empty() {
+        return Err("MCP command is empty".to_string());
+    }
+    if cmd.contains('\0') {
+        return Err("MCP command contains null byte".to_string());
+    }
+    if contains_shell_metachar(cmd) {
+        return Err(format!("MCP command contains disallowed shell characters: {}", cmd));
+    }
+    if cmd.contains("..") {
+        return Err("MCP command must not contain path traversal (..)".to_string());
+    }
+    Ok(())
+}
+
+/// Validate an MCP HTTP URL before using it.
+fn validate_mcp_url(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("MCP URL is empty".to_string());
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("MCP URL must use http or https protocol: {}", url));
+    }
+    Ok(())
+}
+
 /// Check if an MCP server is reachable.
 /// For stdio: checks if the command exists on PATH.
 /// For http: attempts a HEAD request to the URL.
@@ -8,7 +41,8 @@ pub async fn check_mcp_server_health(
 ) -> Result<bool, String> {
     match transport_type.as_str() {
         "stdio" => {
-            // Check if command exists on PATH
+            validate_mcp_command(&target)?;
+
             let result = tokio::task::spawn_blocking(move || {
                 #[cfg(target_os = "windows")]
                 let check = {
@@ -35,7 +69,8 @@ pub async fn check_mcp_server_health(
             Ok(result)
         }
         "http" => {
-            // Try a HEAD request to check reachability
+            validate_mcp_url(&target)?;
+
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(5))
                 .build()

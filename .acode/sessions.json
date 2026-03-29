@@ -1,7 +1,7 @@
 {
   "sessions": [
-    "terminal",
-    "claude"
+    "claude",
+    "terminal"
   ],
   "activeIndex": 0
 }

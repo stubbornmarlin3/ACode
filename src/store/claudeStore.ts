@@ -276,6 +276,18 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         const content = msg.content as Array<Record<string, unknown>>;
         if (!content) continue;
 
+        // Update per-turn context usage from the assistant message's usage field.
+        // This reflects how full the context window is for THIS turn, not cumulative.
+        const msgUsage = msg.usage as Record<string, number> | undefined;
+        if (msgUsage && sessionInfo) {
+          sessionInfo = {
+            ...sessionInfo,
+            tokensUsed: (msgUsage.input_tokens || 0) +
+              (msgUsage.cache_read_input_tokens || 0) +
+              (msgUsage.cache_creation_input_tokens || 0),
+          };
+        }
+
         const textParts: string[] = [];
         const thinkingParts: string[] = [];
         const toolUses: ToolUseEntry[] = [];
@@ -451,13 +463,12 @@ export const useClaudeStore = create<ClaudeStore>((set, get) => ({
         if (modelUsage && sessionInfo) {
           const firstModel = Object.values(modelUsage)[0];
           if (firstModel) {
-            // Context usage = non-cached input + cached input (read + creation).
-            // Output tokens are generated, not part of the context window.
+            // Only update contextWindow from modelUsage (static model property).
+            // tokensUsed is updated per-turn from assistant message usage (not here,
+            // because modelUsage values are cumulative across all turns).
             sessionInfo = {
               ...sessionInfo,
               contextWindow: firstModel.contextWindow || sessionInfo.contextWindow,
-              tokensUsed: (firstModel.inputTokens || 0) +
-                (firstModel.cacheReadInputTokens || 0) + (firstModel.cacheCreationInputTokens || 0),
             };
           }
         }

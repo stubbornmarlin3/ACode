@@ -175,6 +175,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return;
     }
 
+    // Register workspace root for path validation in the backend
+    await invoke("register_workspace_root", { path }).catch(() => {});
+
     // Load project-level settings and MCP configs
     await useSettingsStore.getState().loadProject(path);
     await useMcpStore.getState().loadProject(path);
