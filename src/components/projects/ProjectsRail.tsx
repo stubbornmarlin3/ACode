@@ -52,6 +52,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const setActivePillId = useLayoutStore((s) => s.setActivePillId);
   const togglePillExpanded = useLayoutStore((s) => s.togglePillExpanded);
   const togglePanelOpen = useLayoutStore((s) => s.togglePanelOpen);
+  const dockPill = useLayoutStore((s) => s.dockPill);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
   const addPillSession = useLayoutStore((s) => s.addPillSession);
   const clearActivityUnread = useActivityStore((s) => s.clearUnread);
@@ -72,12 +73,89 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const collapsedSessions = projectSessions.filter((s) => !expandedPillIds.includes(s.id));
 
   const handleCollapsedPillClick = useCallback((session: PillSession) => {
+    // Capture the rail icon rect before it disappears
+    const railIcon = document.querySelector(
+      `.projects-rail .pill-item--collapsed[data-session-id="${session.id}"]`
+    ) as HTMLElement | null;
+    const sourceRect = railIcon?.getBoundingClientRect() ?? null;
+    const iconEl = railIcon?.querySelector(".pill-item__icon");
+    const iconClone = iconEl?.cloneNode(true) as HTMLElement | null;
+
     clearActivityUnread(session.id);
     setActivePillId(session.id);
+    // Dock synchronously so the expanded pill renders on the first frame
+    // (the auto-dock useEffect in PillBar runs too late for the animation)
+    const { dockedSlots: currentSlots, maxPanels: currentMax, floatingPositions } = useLayoutStore.getState().pillBar;
+    if (!currentSlots.includes(session.id) && !floatingPositions[session.id] && currentSlots.length < currentMax) {
+      dockPill(session.id, currentSlots.length);
+    }
     if (session.type === "terminal") useTerminalStore.getState().setActiveKey(session.id);
     else if (session.type === "claude") useClaudeStore.getState().setActiveKey(session.id);
     else if (session.type === "github") useGitHubStore.getState().setActiveKey(session.id);
-  }, [setActivePillId, clearActivityUnread]);
+
+    if (!sourceRect) return;
+
+    // First rAF: React has committed — hide the pill before paint
+    requestAnimationFrame(() => {
+      const target = document.querySelector(
+        `.floating-pill-unit[data-session-id="${session.id}"]`
+      ) as HTMLElement | null;
+      if (!target) return;
+
+      // Hide immediately before the browser paints this frame
+      target.style.opacity = "0";
+
+      // Second rAF: pill is hidden, now set up and run the ghost animation
+      requestAnimationFrame(() => {
+        const targetRect = target.getBoundingClientRect();
+
+        // Build a ghost that starts as the rail icon circle and expands to the pill
+        const ghost = document.createElement("div");
+        ghost.className = "pill-collapse-ghost";
+
+        // Add a centered icon overlay that fades out as the ghost expands
+        let iconOverlayRef: HTMLDivElement | null = null;
+        if (iconClone) {
+          const iconOverlay = document.createElement("div");
+          iconOverlay.className = "pill-collapse-ghost__icon";
+          iconOverlay.style.opacity = "1";
+          iconOverlay.appendChild(iconClone);
+          ghost.appendChild(iconOverlay);
+          iconOverlayRef = iconOverlay;
+        }
+
+        // Start at the rail icon's position and shape
+        ghost.style.left = `${sourceRect.left}px`;
+        ghost.style.top = `${sourceRect.top}px`;
+        ghost.style.width = `${sourceRect.width}px`;
+        ghost.style.height = `${sourceRect.height}px`;
+        ghost.style.borderRadius = "50%";
+
+        document.body.appendChild(ghost);
+        ghost.getBoundingClientRect(); // force layout
+
+        // Animate to expanded pill position and shape
+        const dur = "160ms";
+        ghost.style.transition = `left ${dur} cubic-bezier(0, 0.4, 0.4, 1), top ${dur} cubic-bezier(0, 0.4, 0.4, 1), width ${dur} cubic-bezier(0, 0.4, 0.4, 1), height ${dur} cubic-bezier(0, 0.4, 0.4, 1), border-radius ${dur} cubic-bezier(0, 0.4, 0.4, 1)`;
+        if (iconOverlayRef) {
+          iconOverlayRef.style.transition = `opacity ${dur} cubic-bezier(0, 0.4, 0.4, 1)`;
+          iconOverlayRef.style.opacity = "0";
+        }
+        ghost.style.left = `${targetRect.left}px`;
+        ghost.style.top = `${targetRect.top}px`;
+        ghost.style.width = `${targetRect.width}px`;
+        ghost.style.height = `${targetRect.height}px`;
+        ghost.style.borderRadius = "12px";
+
+        // Reveal the real pill and remove ghost when animation ends
+        ghost.addEventListener("transitionend", (e) => {
+          if (e.propertyName !== "left") return;
+          target.style.opacity = "";
+          ghost.remove();
+        });
+      });
+    });
+  }, [setActivePillId, clearActivityUnread, dockPill]);
 
   /* ── Drag reorder state ── */
   const DRAG_THRESHOLD = 6;

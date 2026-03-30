@@ -15,6 +15,11 @@
   align-items: stretch;
 }
 
+/* Docked pills transition smoothly only when shifting for dock previews */
+.pill-bar--previewing .floating-pill-unit--docked {
+  transition: left 200ms ease, width 200ms ease;
+}
+
 /* When panel is open, the unit becomes a unified container */
 .floating-pill-unit--unified {
   background: rgba(8, 12, 18, 0.92);
@@ -124,6 +129,7 @@
 .dock-slot--hover {
   border-color: rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.03);
+  transition: left 200ms ease, width 200ms ease;
 }
 
 /* ── Add session button ── */
@@ -425,6 +431,28 @@
   font-size: 12px;
   text-align: center;
   padding-top: var(--spacing-4);
+}
+
+/* ── Collapse-to-rail ghost (cloned pill element) ── */
+.pill-collapse-ghost {
+  position: fixed !important;
+  z-index: 9999 !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  background: rgba(8, 12, 18, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+/* Centered icon overlay — fades in as the ghost shrinks into the rail circle */
+.pill-collapse-ghost__icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 /* ── Activity glow animations ── */

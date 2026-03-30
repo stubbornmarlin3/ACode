@@ -14,21 +14,22 @@ import { useGitHubStore } from "./githubStore";
 
 /* ── Session state persistence (.acode/sessions.json) ── */
 
+interface SavedPillSession {
+  type: PillSessionType;
+  panelHeight?: number;
+  expanded?: boolean;
+  panelOpen?: boolean;
+  floating?: { x: number; y: number; width: number };
+  preDockWidth?: number;
+}
+
 interface SavedSessions {
-  sessions: PillSessionType[];
+  sessions: SavedPillSession[];
   activeIndex: number;
+  /** Ordered indices into sessions[] for pills docked in the bottom row */
+  dockedOrder?: number[];
   openFiles?: string[];
   activeFilePath?: string | null;
-  /** Per-session panel heights in px, indexed by session position */
-  panelHeights?: (number | null)[];
-  /** Indices of expanded pills */
-  expandedIndices?: number[];
-  /** Indices of pills with open panels */
-  openPanelIndices?: number[];
-  /** Per-session floating positions (x, y, width), indexed by session position */
-  floatingPositions?: ({ x: number; y: number; width: number } | null)[];
-  /** Docked slot assignments — slot index → session index (or null) */
-  dockedSlotIndices?: (number | null)[];
 }
 
 function getSessionsPath(projectPath: string): string {
@@ -57,29 +58,33 @@ export function persistCurrentSessions(): void {
   if (!ws) return;
   const layout = useLayoutStore.getState();
   const editor = useEditorStore.getState();
-  const projectSessions = layout.pillBar.sessions.filter((s) => s.projectPath === ws);
-  const activeIdx = projectSessions.findIndex((s) => s.id === layout.pillBar.activePillId);
-  const { panelHeights, expandedPillIds, openPanelIds, floatingPositions, dockedSlots } = layout.pillBar;
+  const pb = layout.pillBar;
+  const projectSessions = pb.sessions.filter((s) => s.projectPath === ws);
+  const activeIdx = projectSessions.findIndex((s) => s.id === pb.activePillId);
+
+  const sessions: SavedPillSession[] = projectSessions.map((s) => {
+    const saved: SavedPillSession = { type: s.type };
+    const h = pb.panelHeights[s.id];
+    if (h != null) saved.panelHeight = h;
+    if (pb.expandedPillIds.includes(s.id)) saved.expanded = true;
+    if (pb.openPanelIds.includes(s.id)) saved.panelOpen = true;
+    const fp = pb.floatingPositions[s.id];
+    if (fp) saved.floating = { x: fp.x, y: fp.y, width: fp.width };
+    const pdw = pb.preDockWidths[s.id];
+    if (pdw != null) saved.preDockWidth = pdw;
+    return saved;
+  });
+
+  const dockedOrder = pb.dockedSlots
+    .map((id) => projectSessions.findIndex((s) => s.id === id))
+    .filter((i) => i >= 0);
+
   saveSessions(ws, {
-    sessions: projectSessions.map((s) => s.type),
+    sessions,
     activeIndex: Math.max(0, activeIdx),
+    dockedOrder: dockedOrder.length > 0 ? dockedOrder : undefined,
     openFiles: editor.openFiles.map((f) => f.path),
     activeFilePath: editor.activeFilePath,
-    panelHeights: projectSessions.map((s) => panelHeights[s.id] ?? null),
-    expandedIndices: projectSessions
-      .map((s, i) => expandedPillIds.includes(s.id) ? i : -1)
-      .filter((i) => i >= 0),
-    openPanelIndices: projectSessions
-      .map((s, i) => openPanelIds.includes(s.id) ? i : -1)
-      .filter((i) => i >= 0),
-    floatingPositions: projectSessions.map((s) => {
-      const fp = floatingPositions[s.id];
-      return fp ? { x: fp.x, y: fp.y, width: fp.width } : null;
-    }),
-    dockedSlotIndices: dockedSlots.map((slotId) => {
-      if (!slotId) return null;
-      return projectSessions.findIndex((s) => s.id === slotId);
-    }),
   });
 }
 
@@ -106,6 +111,8 @@ interface ProjectEditorState {
   expandedDirs: string[];
   activePillId: string | null;
   pillBarState: PillBarState; // kept for cache compat
+  expandedPillIds: string[];
+  openPanelIds: string[];
   terminalShowingOutput: boolean;
 }
 
@@ -192,6 +199,12 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       // Persist pill sessions to .acode/sessions.json
       persistCurrentSessions();
 
+      // Capture which pills belong to the project being left
+      const leavingSessions = layoutState.pillBar.sessions.filter(
+        (s) => s.projectPath === workspaceRoot
+      );
+      const leavingIds = new Set(leavingSessions.map((s) => s.id));
+
       nextProjectStates = pruneProjectStates({
         ...projectStates,
         [workspaceRoot]: {
@@ -201,6 +214,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
           expandedDirs: [...expandedDirs],
           activePillId: layoutState.pillBar.activePillId,
           pillBarState: layoutState.pillBar.expandedPillIds.length > 0 ? "panel-open" as PillBarState : "idle" as PillBarState,
+          expandedPillIds: layoutState.pillBar.expandedPillIds.filter((id) => leavingIds.has(id)),
+          openPanelIds: layoutState.pillBar.openPanelIds.filter((id) => leavingIds.has(id)),
           terminalShowingOutput: termProj?.showingOutput ?? false,
         },
       }, path);
@@ -248,8 +263,14 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
     let restoredOpenPanelIds: string[] | null = null;
     if (existingSessions.length === 0) {
       savedData = await loadSavedSessions(path);
-      const types: PillSessionType[] = savedData?.sessions
-        ?? useSettingsStore.getState().pills.defaultSessions;
+
+      // Handle both new format (SavedPillSession[]) and legacy format (PillSessionType[])
+      const savedSessions = savedData?.sessions;
+      const isNewFormat = savedSessions && savedSessions.length > 0 && typeof savedSessions[0] === "object";
+      const types: PillSessionType[] = isNewFormat
+        ? (savedSessions as SavedPillSession[]).map((s) => s.type)
+        : (savedSessions as PillSessionType[] | undefined) ?? useSettingsStore.getState().pills.defaultSessions;
+
       const newSessions = types.map((type) => ({
         id: genSessionId(),
         type,
@@ -259,59 +280,45 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       const activeIdx = savedData?.activeIndex ?? 0;
       defaultActiveId = newSessions[Math.min(activeIdx, newSessions.length - 1)]?.id ?? null;
 
-      // Restore per-panel heights
-      if (savedData?.panelHeights) {
+      // Restore per-session state from saved data in a single pass
+      if (isNewFormat) {
+        const saved = savedSessions as SavedPillSession[];
         const restoredHeights: Record<string, number> = {};
-        newSessions.forEach((sess, i) => {
-          const h = savedData!.panelHeights![i];
-          if (h != null) restoredHeights[sess.id] = h;
-        });
-        if (Object.keys(restoredHeights).length > 0) {
-          useLayoutStore.setState((s) => ({
-            pillBar: { ...s.pillBar, panelHeights: { ...s.pillBar.panelHeights, ...restoredHeights } },
-          }));
-        }
-      }
-
-      // Restore per-session floating positions
-      if (savedData?.floatingPositions) {
         const restoredPositions: Record<string, { x: number; y: number; width: number; zIndex: number }> = {};
+        const restoredPreDockWidths: Record<string, number> = {};
+        restoredExpandedIds = [];
+        restoredOpenPanelIds = [];
+
         newSessions.forEach((sess, i) => {
-          const fp = savedData!.floatingPositions![i];
-          if (fp) restoredPositions[sess.id] = { ...fp, zIndex: i + 1 };
+          if (i >= saved.length) return;
+          const s = saved[i];
+          if (s.panelHeight != null) restoredHeights[sess.id] = s.panelHeight;
+          if (s.expanded) restoredExpandedIds!.push(sess.id);
+          if (s.panelOpen) restoredOpenPanelIds!.push(sess.id);
+          if (s.floating) restoredPositions[sess.id] = { ...s.floating, zIndex: i + 1 };
+          if (s.preDockWidth != null) restoredPreDockWidths[sess.id] = s.preDockWidth;
         });
-        if (Object.keys(restoredPositions).length > 0) {
-          useLayoutStore.setState((s) => ({
-            pillBar: {
-              ...s.pillBar,
+
+        // Restore docked order
+        const dockedSlots: string[] = [];
+        if (savedData?.dockedOrder) {
+          for (const idx of savedData.dockedOrder) {
+            if (idx >= 0 && idx < newSessions.length) dockedSlots.push(newSessions[idx].id);
+          }
+        }
+
+        useLayoutStore.setState((s) => ({
+          pillBar: {
+            ...s.pillBar,
+            ...(Object.keys(restoredHeights).length > 0 && { panelHeights: { ...s.pillBar.panelHeights, ...restoredHeights } }),
+            ...(Object.keys(restoredPositions).length > 0 && {
               floatingPositions: { ...s.pillBar.floatingPositions, ...restoredPositions },
               nextZIndex: Math.max(s.pillBar.nextZIndex, newSessions.length + 1),
-            },
-          }));
-        }
-      }
-
-      // Restore docked slot assignments
-      if (savedData?.dockedSlotIndices) {
-        const restoredSlots = savedData.dockedSlotIndices.map((idx) => {
-          if (idx == null || idx < 0 || idx >= newSessions.length) return null;
-          return newSessions[idx].id;
-        });
-        useLayoutStore.setState((s) => ({
-          pillBar: { ...s.pillBar, dockedSlots: restoredSlots },
+            }),
+            ...(Object.keys(restoredPreDockWidths).length > 0 && { preDockWidths: { ...s.pillBar.preDockWidths, ...restoredPreDockWidths } }),
+            ...(dockedSlots.length > 0 && { dockedSlots }),
+          },
         }));
-      }
-
-      // Build restored expandedPillIds and openPanelIds from saved indices
-      if (savedData?.expandedIndices) {
-        restoredExpandedIds = savedData.expandedIndices
-          .filter((i) => i < newSessions.length)
-          .map((i) => newSessions[i].id);
-      }
-      if (savedData?.openPanelIndices) {
-        restoredOpenPanelIds = savedData.openPanelIndices
-          .filter((i) => i < newSessions.length)
-          .map((i) => newSessions[i].id);
       }
     }
 
@@ -327,8 +334,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
         expandedDirs: new Set(cached.expandedDirs),
         projectStates: nextProjectStates,
       });
-      const expandedPillIds = restoredExpandedIds ?? (activeId ? [activeId] : []);
-      const openPanelIds = restoredOpenPanelIds ?? [];
+      const expandedPillIds = restoredExpandedIds ?? cached.expandedPillIds ?? (activeId ? [activeId] : []);
+      const openPanelIds = restoredOpenPanelIds ?? cached.openPanelIds ?? [];
       useLayoutStore.setState((s) => ({
         pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds, openPanelIds },
       }));

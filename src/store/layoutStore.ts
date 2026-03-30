@@ -54,8 +54,10 @@ interface LayoutStore {
     floatingPositions: Record<string, PillFloatingState>;
     /** Monotonically increasing z-index counter for bring-to-front. */
     nextZIndex: number;
-    /** Quick-dock slots at bottom. Each slot holds a session ID or null. */
-    dockedSlots: (string | null)[];
+    /** Ordered list of docked pill session IDs in the bottom row. */
+    dockedSlots: string[];
+    /** Remembered floating width before docking, so undock restores it. */
+    preDockWidths: Record<string, number>;
   };
   projects: { projects: Project[]; activeProjectId: string | null };
   settingsOpen: boolean;
@@ -78,7 +80,7 @@ interface LayoutStore {
   initFloatingPosition: (id: string, x: number, y: number, width: number) => void;
   dockPill: (id: string, slotIndex: number) => void;
   undockPill: (id: string) => void;
-  setDockedSlots: (slots: (string | null)[]) => void;
+  setDockedSlots: (slots: string[]) => void;
   setActiveProject: (id: string | null) => void;
   addProject: (project: Project) => void;
   removeProject: (id: string) => void;
@@ -125,7 +127,7 @@ function sortSessionsByExpanded(sessions: PillSession[], expandedIds: string[]):
 
 export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   sidebar: { activeTab: "explorer", isOpen: true },
-  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {}, floatingPositions: {}, nextZIndex: 1, dockedSlots: [null] },
+  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {}, floatingPositions: {}, nextZIndex: 1, dockedSlots: [], preDockWidths: {} },
   projects: { projects: [], activeProjectId: null },
   settingsOpen: false,
   cloneExplorerOpen: false,
@@ -142,21 +144,7 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
       // Also expand the pill if not already expanded
       let expanded = s.pillBar.expandedPillIds;
       if (!expanded.includes(id)) {
-        if (expanded.length < s.pillBar.maxPanels) {
-          expanded = [...expanded, id];
-        } else {
-          // Evict the farthest expanded pill by index distance
-          const sessionIdx = s.pillBar.sessions.findIndex((sess) => sess.id === id);
-          let farthestId = expanded[0];
-          let farthestDist = -1;
-          for (const eid of expanded) {
-            const idx = s.pillBar.sessions.findIndex((sess) => sess.id === eid);
-            const dist = idx >= 0 && sessionIdx >= 0 ? Math.abs(idx - sessionIdx) : Infinity;
-            if (dist > farthestDist) { farthestDist = dist; farthestId = eid; }
-          }
-          expanded = expanded.filter((eid) => eid !== farthestId);
-          expanded.push(id);
-        }
+        expanded = [...expanded, id];
       }
       // Only remove panels for pills that are no longer expanded
       const openPanelIds = s.pillBar.openPanelIds.filter((pid) => expanded.includes(pid));
@@ -174,28 +162,9 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
         return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds } };
       } else {
-        let expandedPillIds: string[];
-        let openPanelIds = pb.openPanelIds;
-        if (pb.expandedPillIds.length < pb.maxPanels) {
-          expandedPillIds = [...pb.expandedPillIds, id];
-        } else {
-          // Evict farthest
-          const sessionIdx = pb.sessions.findIndex((sess) => sess.id === id);
-          let farthestId = pb.expandedPillIds[0];
-          let farthestDist = -1;
-          for (const eid of pb.expandedPillIds) {
-            const idx = pb.sessions.findIndex((sess) => sess.id === eid);
-            const dist = idx >= 0 && sessionIdx >= 0 ? Math.abs(idx - sessionIdx) : Infinity;
-            if (dist > farthestDist) { farthestDist = dist; farthestId = eid; }
-          }
-          expandedPillIds = pb.expandedPillIds.filter((eid) => eid !== farthestId);
-          openPanelIds = openPanelIds.filter((pid) => pid !== farthestId);
-          expandedPillIds.push(id);
-        }
-        // Only keep open panels that are still expanded
-        openPanelIds = openPanelIds.filter((pid) => expandedPillIds.includes(pid));
+        const expandedPillIds = [...pb.expandedPillIds, id];
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
-        return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds } };
+        return { pillBar: { ...pb, sessions, expandedPillIds } };
       }
     }),
 
@@ -220,29 +189,12 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
     set((s) => {
       const pb = s.pillBar;
       if (max === pb.maxPanels) return s;
-      let expanded = pb.expandedPillIds;
-      let openPanels = pb.openPanelIds;
-      // If shrinking, trim excess — keep the ones closest to activePillId
-      if (expanded.length > max) {
-        const activeIdx = pb.sessions.findIndex((sess) => sess.id === pb.activePillId);
-        const withDist = expanded.map((id) => {
-          const idx = pb.sessions.findIndex((sess) => sess.id === id);
-          return { id, dist: idx >= 0 && activeIdx >= 0 ? Math.abs(idx - activeIdx) : Infinity };
-        });
-        withDist.sort((a, b) => a.dist - b.dist);
-        const kept = new Set(withDist.slice(0, max).map((w) => w.id));
-        expanded = expanded.filter((id) => kept.has(id));
-        openPanels = openPanels.filter((id) => kept.has(id));
-      }
-      // Resize docked slots array to match new max
+      // Only trim docked slots — expanded floating pills are unconstrained
       let dockedSlots = pb.dockedSlots;
-      if (max > dockedSlots.length) {
-        dockedSlots = [...dockedSlots, ...Array(max - dockedSlots.length).fill(null)];
-      } else if (max < dockedSlots.length) {
-        // Undock pills that no longer fit
+      if (dockedSlots.length > max) {
         dockedSlots = dockedSlots.slice(0, max);
       }
-      return { pillBar: { ...pb, maxPanels: max, expandedPillIds: expanded, openPanelIds: openPanels, dockedSlots } };
+      return { pillBar: { ...pb, maxPanels: max, dockedSlots } };
     }),
 
   setPanelHeight: (id, height) =>
@@ -253,15 +205,12 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   addPillSession: (type, projectPath) => {
     const id = genSessionId();
     set((s) => {
-      // Auto-expand the first session, or if there's room
-      const expanded = s.pillBar.expandedPillIds.length === 0 || s.pillBar.expandedPillIds.length < s.pillBar.maxPanels
-        ? [...s.pillBar.expandedPillIds, id]
-        : s.pillBar.expandedPillIds;
-      // Auto-dock into first available slot
+      // Always expand new sessions
+      const expanded = [...s.pillBar.expandedPillIds, id];
+      // Auto-dock if there's room in the bottom row
       const dockedSlots = [...s.pillBar.dockedSlots];
-      const emptySlot = dockedSlots.indexOf(null);
-      if (emptySlot >= 0) {
-        dockedSlots[emptySlot] = id;
+      if (dockedSlots.length < s.pillBar.maxPanels) {
+        dockedSlots.push(id);
       }
       return {
         pillBar: {
@@ -296,8 +245,9 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
       }
       const { [id]: _, ...panelHeights } = s.pillBar.panelHeights;
       const { [id]: _fp, ...floatingPositions } = s.pillBar.floatingPositions;
-      const dockedSlots = s.pillBar.dockedSlots.map((s) => s === id ? null : s);
-      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds, panelHeights, floatingPositions, dockedSlots } };
+      const { [id]: _pw, ...preDockWidths } = s.pillBar.preDockWidths;
+      const dockedSlots = s.pillBar.dockedSlots.filter((s) => s !== id);
+      return { pillBar: { ...s.pillBar, sessions, activePillId, expandedPillIds, openPanelIds, panelHeights, floatingPositions, preDockWidths, dockedSlots } };
     }),
 
   reorderSessions: (projectPath, fromIndex, toIndex) =>
@@ -383,19 +333,25 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
 
   dockPill: (id, slotIndex) =>
     set((s) => {
-      const slots = [...s.pillBar.dockedSlots];
-      // Remove from any existing slot first
-      const existing = slots.indexOf(id);
-      if (existing >= 0) slots[existing] = null;
-      slots[slotIndex] = id;
+      let slots = s.pillBar.dockedSlots.filter((s) => s !== id);
+      // Insert at the requested position (clamped), or append if at end
+      const insertAt = Math.min(slotIndex, slots.length);
+      slots = [...slots.slice(0, insertAt), id, ...slots.slice(insertAt)];
+      // Enforce max
+      if (slots.length > s.pillBar.maxPanels) slots = slots.slice(0, s.pillBar.maxPanels);
+      // Remember floating width before clearing, so undock can restore it
+      const fp = s.pillBar.floatingPositions[id];
+      const preDockWidths = fp
+        ? { ...s.pillBar.preDockWidths, [id]: fp.width }
+        : s.pillBar.preDockWidths;
       // Remove floating position since it's now docked
       const { [id]: _, ...floatingPositions } = s.pillBar.floatingPositions;
-      return { pillBar: { ...s.pillBar, dockedSlots: slots, floatingPositions } };
+      return { pillBar: { ...s.pillBar, dockedSlots: slots, floatingPositions, preDockWidths } };
     }),
 
   undockPill: (id) =>
     set((s) => {
-      const slots = s.pillBar.dockedSlots.map((s) => s === id ? null : s);
+      const slots = s.pillBar.dockedSlots.filter((s) => s !== id);
       return { pillBar: { ...s.pillBar, dockedSlots: slots } };
     }),
 
