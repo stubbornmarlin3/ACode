@@ -897,6 +897,62 @@ pub async fn github_poll_device_flow(
     }
 }
 
+/// Create a new repository on GitHub for the authenticated user.
+#[tauri::command]
+pub async fn github_create_repo(
+    name: String,
+    private: bool,
+    description: Option<String>,
+) -> Result<GitHubCreatedRepo, String> {
+    let token = load_stored_token()?;
+    let http = reqwest::Client::new();
+
+    let mut body = serde_json::json!({
+        "name": name,
+        "private": private,
+        "auto_init": false,
+    });
+    if let Some(desc) = description {
+        body["description"] = serde_json::Value::String(desc);
+    }
+
+    let resp = http
+        .post("https://api.github.com/user/repos")
+        .header("Authorization", format!("Bearer {}", token))
+        .header("User-Agent", "acode")
+        .header("Accept", "application/vnd.github+json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create repo: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("GitHub API returned {} — {}", status, text));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(GitHubCreatedRepo {
+        full_name: data["full_name"].as_str().unwrap_or("").to_string(),
+        clone_url: data["clone_url"].as_str().unwrap_or("").to_string(),
+        ssh_url: data["ssh_url"].as_str().unwrap_or("").to_string(),
+        html_url: data["html_url"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+#[derive(Serialize, Clone)]
+pub struct GitHubCreatedRepo {
+    pub full_name: String,
+    pub clone_url: String,
+    pub ssh_url: String,
+    pub html_url: String,
+}
+
 /// Log out of GitHub — clear stored token and cached client.
 #[tauri::command]
 pub async fn github_logout(

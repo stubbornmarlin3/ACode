@@ -15,6 +15,7 @@ pub struct GitStatus {
     pub behind: u32,
     pub is_repo: bool,
     pub has_upstream: bool,
+    pub has_remote: bool,
 }
 
 #[derive(Serialize, Clone)]

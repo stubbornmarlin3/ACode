@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./ProjectsRail.css";
 import { FolderOpen, GitFork, ExternalLink, XCircle, Plus, Terminal as TerminalIcon, Github } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -6,6 +6,7 @@ import { useLayoutStore, type Project, type PillSession, type PillSessionType } 
 import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { useEditorStore, persistCurrentSessions } from "../../store/editorStore";
 import { useActivityStore, getProjectActivity } from "../../store/activityStore";
+import { useNotificationStore } from "../../store/notificationStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useClaudeStore } from "../../store/claudeStore";
 import { useGitHubStore } from "../../store/githubStore";
@@ -55,6 +56,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
   const dockPill = useLayoutStore((s) => s.dockPill);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
   const addPillSession = useLayoutStore((s) => s.addPillSession);
+  const reorderSessions = useLayoutStore((s) => s.reorderSessions);
   const clearActivityUnread = useActivityStore((s) => s.clearUnread);
   const isRepo = useGitStore((s) => s.isRepo);
 
@@ -64,9 +66,8 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     if (type === "terminal") useTerminalStore.getState().setActiveKey(id);
     else if (type === "claude") useClaudeStore.getState().setActiveKey(id);
     else if (type === "github") useGitHubStore.getState().setActiveKey(id);
-    setActivePillId(id);
     persistCurrentSessions();
-  }, [workspaceRoot, addPillSession, setActivePillId]);
+  }, [workspaceRoot, addPillSession]);
 
   // Collapsed pills for the active project
   const projectSessions = allSessions.filter((s) => s.projectPath === workspaceRoot);
@@ -82,6 +83,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     const iconClone = iconEl?.cloneNode(true) as HTMLElement | null;
 
     clearActivityUnread(session.id);
+    useNotificationStore.getState().markReadBySession(session.id);
     setActivePillId(session.id);
     // Dock synchronously so the expanded pill renders on the first frame
     // (the auto-dock useEffect in PillBar runs too late for the animation)
@@ -272,6 +274,128 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     }
   }, []);
 
+  /* ── Pill drag reorder state ── */
+  const PILL_DRAG_THRESHOLD = 6;
+  const pillDragState = useRef<{
+    index: number;
+    startY: number;
+    slotRects: DOMRect[];
+    pointerId: number;
+    target: HTMLElement;
+  } | null>(null);
+  const [pillDragIndex, setPillDragIndex] = useState<number | null>(null);
+  const [pillDragOffsetY, setPillDragOffsetY] = useState(0);
+  const [pillShiftMap, setPillShiftMap] = useState<Record<number, number>>({});
+  const pillDragOverIndexRef = useRef<number | null>(null);
+  const didPillDragRef = useRef(false);
+  const [pillSuppressTransition, setPillSuppressTransition] = useState(false);
+
+  // The visual order of collapsed pills (reversed for bottom-up layout)
+  const reversedCollapsed = useMemo(() => [...collapsedSessions].reverse(), [collapsedSessions]);
+
+  const getPillSlotRects = useCallback(() => {
+    const container = document.querySelector(".projects-rail");
+    if (!container) return [];
+    const items = container.querySelectorAll<HTMLElement>(".projects-rail__pill-slot");
+    return Array.from(items).map((el) => el.getBoundingClientRect());
+  }, []);
+
+  const handlePillDragPointerDown = useCallback(
+    (e: React.PointerEvent, index: number) => {
+      if (e.button !== 0) return;
+      const rects = getPillSlotRects();
+      pillDragState.current = { index, startY: e.clientY, slotRects: rects, pointerId: e.pointerId, target: e.currentTarget as HTMLElement };
+      pillDragOverIndexRef.current = index;
+    },
+    [getPillSlotRects]
+  );
+
+  const handlePillDragPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const ds = pillDragState.current;
+      if (!ds) return;
+      const dy = e.clientY - ds.startY;
+
+      if (pillDragIndex === null && Math.abs(dy) < PILL_DRAG_THRESHOLD) return;
+      if (pillDragIndex === null) {
+        setPillDragIndex(ds.index);
+        ds.target.setPointerCapture(ds.pointerId);
+      }
+      didPillDragRef.current = true;
+      setPillDragOffsetY(dy);
+
+      const rects = ds.slotRects;
+      const from = ds.index;
+      const dragRect = rects[from];
+      if (!dragRect) return;
+
+      const draggedTop = dragRect.top + dy;
+      const draggedBottom = dragRect.bottom + dy;
+      const gap = from < rects.length - 1 ? rects[from + 1].top - rects[from].bottom : 8;
+
+      let newTarget = from;
+      for (let i = 0; i < rects.length; i++) {
+        if (i === from) continue;
+        const r = rects[i];
+        const threshold = r.height * 0.3;
+        if (i < from && draggedTop < r.bottom - threshold) {
+          newTarget = i;
+          break;
+        }
+        if (i > from && draggedBottom > r.top + threshold) {
+          newTarget = i;
+        }
+      }
+
+      pillDragOverIndexRef.current = newTarget;
+
+      const shifts: Record<number, number> = {};
+      if (newTarget !== from) {
+        const dir = newTarget > from ? -1 : 1;
+        const lo = Math.min(from, newTarget);
+        const hi = Math.max(from, newTarget);
+        for (let i = lo; i <= hi; i++) {
+          if (i === from) continue;
+          shifts[i] = (rects[from].height + gap) * dir;
+        }
+      }
+      setPillShiftMap(shifts);
+    },
+    [pillDragIndex]
+  );
+
+  const handlePillDragPointerUp = useCallback(() => {
+    const ds = pillDragState.current;
+    const targetIndex = pillDragOverIndexRef.current;
+    if (ds && targetIndex !== null && targetIndex !== ds.index && didPillDragRef.current && workspaceRoot) {
+      setPillSuppressTransition(true);
+      const fromSession = reversedCollapsed[ds.index];
+      const toSession = reversedCollapsed[targetIndex];
+      if (fromSession && toSession) {
+        const fromIdx = projectSessions.indexOf(fromSession);
+        const toIdx = projectSessions.indexOf(toSession);
+        if (fromIdx >= 0 && toIdx >= 0) {
+          reorderSessions(workspaceRoot, fromIdx, toIdx);
+          persistCurrentSessions();
+        }
+      }
+      requestAnimationFrame(() => requestAnimationFrame(() => setPillSuppressTransition(false)));
+    }
+    pillDragState.current = null;
+    pillDragOverIndexRef.current = null;
+    setPillDragIndex(null);
+    setPillDragOffsetY(0);
+    setPillShiftMap({});
+    setTimeout(() => { didPillDragRef.current = false; }, 50);
+  }, [reorderSessions, workspaceRoot, reversedCollapsed, projectSessions]);
+
+  const handlePillIconClickCapture = useCallback((e: React.MouseEvent) => {
+    if (didPillDragRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, []);
+
   // Resolve icons for projects that don't have one yet
   useEffect(() => {
     for (const project of projects) {
@@ -291,6 +415,7 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     if (project.id === activeProjectId) return;
     setActiveProject(project.id);
     useLayoutStore.getState().setSettingsOpen(false);
+    useNotificationStore.getState().markReadByProject(project.path);
     await setWorkspaceRoot(project.path);
   };
 
@@ -299,22 +424,27 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
     const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
     const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
     const parentDir = ws && lastSep > 0 ? ws.substring(0, lastSep) : null;
-    const selected = await invoke<string | null>("pick_folder", { defaultPath: parentDir });
-    if (!selected) return;
+    const selected = await invoke<string[]>("pick_folders", { defaultPath: parentDir });
+    if (!selected.length) return;
 
-    // If already open, just switch to it
-    const existing = projects.find((p) => p.path === selected);
-    if (existing) {
-      setActiveProject(existing.id);
-      setWorkspaceRoot(existing.path);
-      return;
+    let lastId: string | null = null;
+    for (const folder of selected) {
+      const existing = projects.find((p) => p.path === folder);
+      if (existing) {
+        lastId = existing.id;
+      } else {
+        const name = folder.split(/[\\/]/).pop() ?? folder;
+        const id = folder;
+        addProject({ id, name, path: folder });
+        lastId = id;
+      }
     }
 
-    const name = selected.split(/[\\/]/).pop() ?? selected;
-    const id = selected;
-    addProject({ id, name, path: selected });
-    setActiveProject(id);
-    setWorkspaceRoot(selected);
+    if (lastId) {
+      setActiveProject(lastId);
+      const lastPath = selected[selected.length - 1];
+      setWorkspaceRoot(lastPath);
+    }
   }, [projects, addProject, setActiveProject, setWorkspaceRoot]);
 
   const handleProjectContext = useCallback(
@@ -471,22 +601,59 @@ export function ProjectsRail({ onDrag, onDoubleClick }: Props) {
         <div className="projects-rail__spacer" />
 
         {/* ── Collapsed pills (grow upward above +S, nearest to +S first) ── */}
-        {[...collapsedSessions].reverse().map((session) => (
-          <PillItem
-            key={session.id}
-            sessionId={session.id}
-            sessionType={session.type}
-            isExpanded={false}
-            onCollapsedClick={() => handleCollapsedPillClick(session)}
-            onLabelClick={() => togglePanelOpen(session.id)}
-            onCollapse={() => togglePillExpanded(session.id)}
-            onRemove={async () => {
-              removePillSession(session.id);
-              await cleanupSession(session);
-              persistCurrentSessions();
-            }}
-          />
-        ))}
+        {reversedCollapsed.map((session, idx) => {
+          const isPillDragging = pillDragIndex === idx;
+          const pillShiftY = pillShiftMap[idx] ?? 0;
+          const pillTransStyle = pillSuppressTransition ? "none" : undefined;
+          return (
+            <div
+              key={session.id}
+              className="projects-rail__pill-slot"
+              style={{
+                transform: isPillDragging
+                  ? `translateY(${pillDragOffsetY}px)`
+                  : pillShiftY ? `translateY(${pillShiftY}px)` : undefined,
+                transition: pillTransStyle,
+                zIndex: isPillDragging ? 10 : undefined,
+                position: "relative",
+              }}
+              onClickCapture={handlePillIconClickCapture}
+              onPointerDown={(e) => handlePillDragPointerDown(e, idx)}
+              onPointerMove={handlePillDragPointerMove}
+              onPointerUp={handlePillDragPointerUp}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                contextMenu.show(e, [
+                  {
+                    label: "Close",
+                    icon: <XCircle size={12} />,
+                    danger: true,
+                    action: async () => {
+                      removePillSession(session.id);
+                      await cleanupSession(session);
+                      persistCurrentSessions();
+                    },
+                  },
+                ]);
+              }}
+            >
+              <PillItem
+                sessionId={session.id}
+                sessionType={session.type}
+                isExpanded={false}
+                onCollapsedClick={() => handleCollapsedPillClick(session)}
+                onLabelClick={() => togglePanelOpen(session.id)}
+                onCollapse={() => togglePillExpanded(session.id)}
+                onRemove={async () => {
+                  removePillSession(session.id);
+                  await cleanupSession(session);
+                  persistCurrentSessions();
+                }}
+              />
+            </div>
+          );
+        })}
         {/* [+S] Add session button (bottommost, aligned with pill bar) */}
         {workspaceRoot && <AddSessionButton projectPath={workspaceRoot} />}
       </aside>

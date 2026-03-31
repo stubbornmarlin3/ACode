@@ -4,12 +4,10 @@ import {
   useSettingsStore,
   DEFAULTS,
   type KeybindAction,
-  type PillsSettings,
   type SidebarSettings,
   type SettingsOverrides,
 } from "../../store/settingsStore";
 import { useEditorStore } from "../../store/editorStore";
-import { type PillSessionType } from "../../store/layoutStore";
 import { McpServersSection } from "./McpServersSection";
 import "./SettingsScreen.css";
 
@@ -209,46 +207,6 @@ function ProjectOverrideIndicator({
   );
 }
 
-/* ── Default pills selector ── */
-
-const PILL_OPTIONS: { type: PillSessionType; label: string }[] = [
-  { type: "terminal", label: "Terminal" },
-  { type: "claude", label: "Claude" },
-  { type: "github", label: "GitHub" },
-];
-
-function PillsSelector({
-  value,
-  onChange,
-}: {
-  value: PillSessionType[];
-  onChange: (v: PillSessionType[]) => void;
-}) {
-  const toggle = (type: PillSessionType) => {
-    if (value.includes(type)) {
-      // Don't allow empty — must have at least one
-      if (value.length <= 1) return;
-      onChange(value.filter((t) => t !== type));
-    } else {
-      onChange([...value, type]);
-    }
-  };
-
-  return (
-    <div className="pills-selector">
-      {PILL_OPTIONS.map((opt) => (
-        <button
-          key={opt.type}
-          className={`pills-selector__item${value.includes(opt.type) ? " pills-selector__item--active" : ""}`}
-          onClick={() => toggle(opt.type)}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /* ── Main settings screen ── */
 
 type SettingsScope = "user" | "workspace";
@@ -267,7 +225,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
   const editor = useSettingsStore((s) => s.editor);
   const terminal = useSettingsStore((s) => s.terminal);
   const appearance = useSettingsStore((s) => s.appearance);
-  const pills = useSettingsStore((s) => s.pills);
   const sidebarSettings = useSettingsStore((s) => s.sidebar);
 
 
@@ -275,14 +232,12 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
   const setEditorSetting = useSettingsStore((s) => s.setEditorSetting);
   const setTerminalSetting = useSettingsStore((s) => s.setTerminalSetting);
   const setAppearanceSetting = useSettingsStore((s) => s.setAppearanceSetting);
-  const setPillsSetting = useSettingsStore((s) => s.setPillsSetting);
   const setSidebarSetting = useSettingsStore((s) => s.setSidebarSetting);
 
   // Project setters
   const setProjectEditorSetting = useSettingsStore((s) => s.setProjectEditorSetting);
   const setProjectTerminalSetting = useSettingsStore((s) => s.setProjectTerminalSetting);
   const setProjectAppearanceSetting = useSettingsStore((s) => s.setProjectAppearanceSetting);
-  const setProjectPillsSetting = useSettingsStore((s) => s.setProjectPillsSetting);
   const setProjectSidebarSetting = useSettingsStore((s) => s.setProjectSidebarSetting);
 
   const resetAllSettings = useSettingsStore((s) => s.resetAllSettings);
@@ -296,8 +251,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
     isWorkspace ? setProjectTerminalSetting(key, value) : setTerminalSetting(key, value);
   const appSet = <K extends keyof typeof appearance>(key: K, value: (typeof appearance)[K]) =>
     isWorkspace ? setProjectAppearanceSetting(key, value) : setAppearanceSetting(key, value);
-  const pillSet = <K extends keyof PillsSettings>(key: K, value: PillsSettings[K]) =>
-    isWorkspace ? setProjectPillsSetting(key, value) : setPillsSetting(key, value);
   const sidebarSet = <K extends keyof SidebarSettings>(key: K, value: SidebarSettings[K]) =>
     isWorkspace ? setProjectSidebarSetting(key, value) : setSidebarSetting(key, value);
 
@@ -342,28 +295,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
               ))}
             </div>
           )}
-
-          {/* ── Pills / Sessions ── */}
-          <div className="settings-section">
-            <h3 className="settings-section__title">Sessions</h3>
-            <div className="settings-row">
-              <span className="settings-row__label">
-                Default pills
-                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="pills" settingKey="defaultSessions" />}
-              </span>
-              <div className="settings-row__control">
-                {isWorkspace && <OverrideBadge category="pills" settingKey="defaultSessions" />}
-                <ResetButton
-                  isDefault={JSON.stringify(pills.defaultSessions) === JSON.stringify(DEFAULTS.pills.defaultSessions)}
-                  onReset={() => pillSet("defaultSessions", DEFAULTS.pills.defaultSessions)}
-                />
-                <PillsSelector
-                  value={pills.defaultSessions}
-                  onChange={(v) => pillSet("defaultSessions", v)}
-                />
-              </div>
-            </div>
-          </div>
 
           {/* ── Editor ── */}
           <div className="settings-section">
@@ -410,28 +341,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
                 {isWorkspace && <OverrideBadge category="editor" settingKey="lineWrapping" />}
                 <ResetButton isDefault={editor.lineWrapping === DEFAULTS.editor.lineWrapping} onReset={() => edSet("lineWrapping", DEFAULTS.editor.lineWrapping)} />
                 <Toggle checked={editor.lineWrapping} onChange={(v) => edSet("lineWrapping", v)} />
-              </div>
-            </div>
-            <div className="settings-row">
-              <span className="settings-row__label">
-                Line Numbers
-                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="editor" settingKey="lineNumbers" />}
-              </span>
-              <div className="settings-row__control">
-                {isWorkspace && <OverrideBadge category="editor" settingKey="lineNumbers" />}
-                <ResetButton isDefault={editor.lineNumbers === DEFAULTS.editor.lineNumbers} onReset={() => edSet("lineNumbers", DEFAULTS.editor.lineNumbers)} />
-                <Toggle checked={editor.lineNumbers} onChange={(v) => edSet("lineNumbers", v)} />
-              </div>
-            </div>
-            <div className="settings-row">
-              <span className="settings-row__label">
-                Minimap
-                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="editor" settingKey="minimap" />}
-              </span>
-              <div className="settings-row__control">
-                {isWorkspace && <OverrideBadge category="editor" settingKey="minimap" />}
-                <ResetButton isDefault={editor.minimap === DEFAULTS.editor.minimap} onReset={() => edSet("minimap", DEFAULTS.editor.minimap)} />
-                <Toggle checked={editor.minimap} onChange={(v) => edSet("minimap", v)} />
               </div>
             </div>
           </div>
@@ -486,17 +395,6 @@ export function SettingsScreen({ onDrag, onDoubleClick }: Props) {
                 {isWorkspace && <OverrideBadge category="appearance" settingKey="sidebarWidth" />}
                 <ResetButton isDefault={appearance.sidebarWidth === DEFAULTS.appearance.sidebarWidth} onReset={() => appSet("sidebarWidth", DEFAULTS.appearance.sidebarWidth)} />
                 <NumberInput value={appearance.sidebarWidth} min={160} max={480} step={10} onChange={(v) => appSet("sidebarWidth", v)} />
-              </div>
-            </div>
-            <div className="settings-row">
-              <span className="settings-row__label">
-                Panel Height (vh)
-                {!isWorkspace && workspaceRoot && <ProjectOverrideIndicator category="appearance" settingKey="pillPanelHeight" />}
-              </span>
-              <div className="settings-row__control">
-                {isWorkspace && <OverrideBadge category="appearance" settingKey="pillPanelHeight" />}
-                <ResetButton isDefault={appearance.pillPanelHeight === DEFAULTS.appearance.pillPanelHeight} onReset={() => appSet("pillPanelHeight", DEFAULTS.appearance.pillPanelHeight)} />
-                <NumberInput value={appearance.pillPanelHeight} min={20} max={90} step={5} onChange={(v) => appSet("pillPanelHeight", v)} />
               </div>
             </div>
           </div>

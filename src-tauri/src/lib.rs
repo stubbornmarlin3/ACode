@@ -230,6 +230,23 @@ fn pick_folder(default_path: Option<String>) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn pick_folders(default_path: Option<String>) -> Result<Vec<String>, String> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(ref p) = default_path {
+        let dir = std::path::Path::new(p);
+        if dir.is_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+    }
+    Ok(dialog
+        .pick_folders()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
+}
+
+#[tauri::command]
 fn save_file(path: String, content: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
     let validated = validate_path(&path, &ws)?;
     if let Some(parent) = validated.parent() {
@@ -664,8 +681,8 @@ fn spawn_terminal(
             concat!(
                 "function __a{$e=[char]27;$b=[char]7;$c=$args-join' ';",
                 "Write-Host -NoNewline \"$e[A`r$e[2K> $c`n$e]7770;S$b\";",
-                "Invoke-Expression $c;",
-                "Write-Host -NoNewline \"$e]7770;D$(Get-Location)$b$e]7770;E$b\"}\n",
+                "try{Invoke-Expression $c}finally{",
+                "Write-Host -NoNewline \"$e]7770;D$(Get-Location)$b$e]7770;E$b\"}}\n",
                 "function prompt{''}\n",
                 "clear\n",
                 "Write-Host -NoNewline \"$([char]27)]7770;R$([char]7)\"\n"
@@ -678,7 +695,8 @@ fn spawn_terminal(
             // After command, emit cwd via OSC 7770;D for status bar tracking
             concat!(
                 "__a(){ printf '\\033[A\\r\\033[2K> %s\\n\\033]7770;S\\007' \"$*\";",
-                "eval \"$@\";__r=$?;",
+                "trap 'printf \"\\033]7770;D%s\\007\\033]7770;E\\007\" \"$PWD\";trap - INT;return 130' INT;",
+                "eval \"$@\";__r=$?;trap - INT;",
                 "printf '\\033]7770;D%s\\007\\033]7770;E\\007' \"$PWD\";return $__r;}\n",
                 "PS1='';PS2=''\n",
                 "clear\n",
@@ -1215,6 +1233,7 @@ pub fn run() {
             expand_dir,
             tab_complete,
             pick_folder,
+            pick_folders,
             save_file,
             get_config_dir,
             get_home_dir,
@@ -1252,6 +1271,7 @@ pub fn run() {
             git::local::git_pull,
             git::local::git_fetch,
             git::local::git_remote_info,
+            git::local::git_add_remote,
             git::github::github_check_auth,
             git::github::github_set_token,
             git::github::github_list_prs,
@@ -1269,6 +1289,7 @@ pub fn run() {
             git::github::github_start_device_flow,
             git::github::github_poll_device_flow,
             git::github::github_list_workflow_runs,
+            git::github::github_create_repo,
             git::github::github_logout,
             watch_directory,
             unwatch_directory,

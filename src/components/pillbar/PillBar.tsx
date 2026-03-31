@@ -4,7 +4,7 @@ import { Plus, Terminal as TerminalIcon, Github, XCircle } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { tauriInvoke, tauriInvokeQuiet } from "../../services/tauri";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
-import { useLayoutStore, genSessionId, maxPanelsForWidth, type PillSession, type PillSessionType, type PillFloatingState } from "../../store/layoutStore";
+import { useLayoutStore, maxPanelsForWidth, type PillSession, type PillSessionType, type PillFloatingState } from "../../store/layoutStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
 import { useTerminalStore } from "../../store/terminalStore";
@@ -12,6 +12,7 @@ import { useClaudeStore } from "../../store/claudeStore";
 import { useActivityStore } from "../../store/activityStore";
 import { useGitHubStore } from "../../store/githubStore";
 import { useSettingsStore } from "../../store/settingsStore";
+import { useNotificationStore } from "../../store/notificationStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import { PillItem } from "./PillItem";
 import { PillPanel } from "./PillPanel";
@@ -39,11 +40,13 @@ const OSC_CWD_RE = /\x1b\]7770;D([^\x07]*)\x07/;
  *  First printf clears echo line and re-prints the command cleanly.
  *  Parser captures raw output between start/end markers. */
 function useTerminalEvents() {
-  const silenceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
   useEffect(() => {
     let cancelled = false;
     const unlisteners: (() => void)[] = [];
+
+    // Local tracking for OSC capture state per session (not in the store — only
+    // the derived commandPhase matters for the UI).
+    const captureState: Record<string, { capturing: boolean; raw: string }> = {};
 
     listen<{ key: string; data: string }>("terminal-output", (event) => {
       if (cancelled) return;
@@ -84,37 +87,49 @@ function useTerminalEvents() {
       if (!proj) return;
 
       // --- Parse OSC markers to capture command output for pill preview ---
-      let { capturingCommand, capturedRaw } = proj;
+      const cs = captureState[key] ?? { capturing: proj.commandPhase === "capturing", raw: proj.capturedRaw };
+      let { capturing, raw } = cs;
       let remaining = data;
       let updated = false;
+      let startedCapture = false;
+      let finishedCapture = false;
 
       while (remaining.length > 0) {
-        if (!capturingCommand) {
+        if (!capturing) {
           const startIdx = remaining.indexOf(OSC_START);
           if (startIdx === -1) break;
-          capturingCommand = true;
-          capturedRaw = "";
+          capturing = true;
+          raw = "";
+          startedCapture = true;
           remaining = remaining.slice(startIdx + OSC_START.length);
           updated = true;
         } else {
           const endIdx = remaining.indexOf(OSC_END);
           if (endIdx === -1) {
-            capturedRaw += remaining;
+            raw += remaining;
             remaining = "";
             updated = true;
           } else {
-            capturedRaw += remaining.slice(0, endIdx);
-            capturingCommand = false;
+            raw += remaining.slice(0, endIdx);
+            capturing = false;
+            finishedCapture = true;
             remaining = remaining.slice(endIdx + OSC_END.length);
             updated = true;
           }
         }
       }
 
+      captureState[key] = { capturing, raw };
+
       if (updated) {
-        const clean = stripAnsi(capturedRaw);
+        const clean = stripAnsi(raw);
         const lines = clean.split(/[\r\n]+/).filter((l) => l.trim().length > 0);
         const lastLine = lines.length > 0 ? lines[lines.length - 1] : "";
+
+        // Determine commandPhase transition
+        let commandPhase = proj.commandPhase;
+        if (startedCapture) commandPhase = "capturing";
+        if (finishedCapture) commandPhase = "done";
 
         useTerminalStore.setState({
           projects: {
@@ -122,34 +137,21 @@ function useTerminalEvents() {
             [key]: {
               ...proj,
               outputBuffer: useTerminalStore.getState().projects[key]?.outputBuffer ?? proj.outputBuffer,
-              capturingCommand,
-              capturedRaw,
+              capturedRaw: raw,
               lastOutputLine: lastLine || proj.lastOutputLine,
-              showingOutput: lastLine.length > 0 || proj.showingOutput,
+              commandPhase,
             },
           },
         });
 
-        // If capture just ended (end marker found), mark command done
-        if (!capturingCommand) {
+        // Update activity store (notification/glow layer only)
+        if (finishedCapture) {
           const layout = useLayoutStore.getState();
           const isVisible = layout.pillBar.openPanelIds.includes(key);
           useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
-          if (silenceTimers.current[key]) {
-            clearTimeout(silenceTimers.current[key]);
-            delete silenceTimers.current[key];
-          }
-          return;
+        } else if (startedCapture || capturing) {
+          useActivityStore.getState().setStatus(key, "running");
         }
-
-        // Currently capturing (between start and end markers) — mark running
-        useActivityStore.getState().setStatus(key, "running");
-        if (silenceTimers.current[key]) clearTimeout(silenceTimers.current[key]);
-        silenceTimers.current[key] = setTimeout(() => {
-          const layout = useLayoutStore.getState();
-          const isVisible = layout.pillBar.openPanelIds.includes(key);
-          useActivityStore.getState().setStatus(key, isVisible ? "idle" : "unread");
-        }, 2000);
       }
     }).then((u) => unlisteners.push(u));
 
@@ -157,18 +159,16 @@ function useTerminalEvents() {
       if (cancelled) return;
       const { key } = event.payload;
 
-      // Mark shell as dead and not ready
+      // Reset local capture state
+      delete captureState[key];
+
+      // Mark shell as dead and not ready, reset command phase
       const s = useTerminalStore.getState();
       const p = s.projects[key];
       if (p) {
         useTerminalStore.setState({
-          projects: { ...s.projects, [key]: { ...p, isSpawned: false, shellReady: false } },
+          projects: { ...s.projects, [key]: { ...p, isSpawned: false, shellReady: false, commandPhase: "idle" } },
         });
-      }
-
-      if (silenceTimers.current[key]) {
-        clearTimeout(silenceTimers.current[key]);
-        delete silenceTimers.current[key];
       }
 
       const layout = useLayoutStore.getState();
@@ -191,8 +191,6 @@ function useTerminalEvents() {
     return () => {
       cancelled = true;
       unlisteners.forEach((u) => u());
-      Object.values(silenceTimers.current).forEach(clearTimeout);
-      silenceTimers.current = {};
     };
   }, []);
 }
@@ -265,7 +263,6 @@ export async function cleanupSession(session: PillSession) {
 
 export function AddSessionButton({ projectPath }: { projectPath: string }) {
   const addPillSession = useLayoutStore((s) => s.addPillSession);
-  const setActivePillId = useLayoutStore((s) => s.setActivePillId);
   const isRepo = useGitStore((s) => s.isRepo);
   const contextMenu = useContextMenu();
 
@@ -278,9 +275,8 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
     } else if (type === "github") {
       useGitHubStore.getState().setActiveKey(id);
     }
-    setActivePillId(id);
     persistCurrentSessions();
-  }, [addPillSession, setActivePillId, projectPath]);
+  }, [addPillSession, projectPath]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -318,7 +314,7 @@ export function AddSessionButton({ projectPath }: { projectPath: string }) {
 }
 
 /** Default width for a new floating pill */
-const DEFAULT_PILL_WIDTH = 400;
+const DEFAULT_PILL_WIDTH = 600;
 const MIN_PILL_WIDTH = 280;
 const MAX_PILL_WIDTH_RATIO = 0.8;
 const DRAG_THRESHOLD = 8;
@@ -714,8 +710,111 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
     target.addEventListener("pointercancel", handleUp);
   }, [session.id, height, floating.x, floating.y, setPillPosition]);
 
+  // ── Corner resize (simultaneous width + panel height) ──
+  const handleCornerResizePointerDown = useCallback((corner: "top-left" | "top-right" | "bottom-left" | "bottom-right") => (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startWidth = floating.width;
+    const startPosX = floating.x;
+    let currentHeight = height;
+    const isLeft = corner === "top-left" || corner === "bottom-left";
+    const isTop = corner === "top-left" || corner === "top-right";
+    const isFlipped = unitRef.current?.classList.contains("floating-pill-unit--flipped") ?? false;
+
+    const handleMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const container = containerRef.current;
+      const cW = container?.clientWidth ?? window.innerWidth;
+
+      // ── Horizontal ──
+      let newWidth: number;
+      let newX = startPosX;
+      if (isLeft) {
+        newWidth = startWidth - dx;
+        newX = startPosX + dx;
+      } else {
+        newWidth = startWidth + dx;
+      }
+      const maxW = cW * MAX_PILL_WIDTH_RATIO;
+      newWidth = Math.max(MIN_PILL_WIDTH, Math.min(maxW, newWidth));
+      if (isLeft) newX = startPosX + (startWidth - newWidth);
+      if (newX < BOUND_PAD) {
+        newWidth = newWidth - (BOUND_PAD - newX);
+        newX = BOUND_PAD;
+        newWidth = Math.max(MIN_PILL_WIDTH, newWidth);
+      }
+      if (newX + newWidth > cW - BOUND_PAD) {
+        newWidth = cW - BOUND_PAD - newX;
+        newWidth = Math.max(MIN_PILL_WIDTH, newWidth);
+      }
+
+      // ── Vertical (panel height) ──
+      if (isPanelOpen) {
+        // Top corners: drag up = grow; bottom corners: drag down = grow
+        const heightDelta = isTop ? -dy : dy;
+        const next = Math.max(100, Math.min(window.innerHeight * 0.85, height + heightDelta));
+        currentHeight = next;
+        const unit = unitRef.current;
+        if (!unit) return;
+        const slot = unit.querySelector(".pill-panel__slot") as HTMLElement | null;
+        if (slot) slot.style.height = `${next}px`;
+        // Top corners must move unit top upward as panel grows (unit grows down naturally).
+        // Bottom corners need no top adjustment — the unit simply extends downward.
+        if (isTop) {
+          const initTop = isFlipped ? floating.y : floating.y - height;
+          unit.style.top = `${initTop - (next - height)}px`;
+        }
+      }
+
+      // Apply horizontal DOM updates
+      const el = unitRef.current;
+      if (el) {
+        el.style.width = `${newWidth}px`;
+        el.style.left = `${newX}px`;
+      }
+    };
+
+    const handleUp = () => {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleUp);
+      target.removeEventListener("pointercancel", handleUp);
+
+      const el = unitRef.current;
+      if (el) {
+        const finalWidth = parseFloat(el.style.width) || startWidth;
+        const finalX = parseFloat(el.style.left) || startPosX;
+        const heightDelta = isPanelOpen ? Math.round(currentHeight) - height : 0;
+        setPillWidth(session.id, Math.round(finalWidth));
+        if (isPanelOpen) {
+          useLayoutStore.getState().setPanelHeight(session.id, Math.round(currentHeight));
+        }
+        // Adjust pill Y: only changes when the corner is on the pill's side
+        // (top when flipped = pill at top, bottom when not flipped = pill at bottom)
+        let finalY = floating.y;
+        if (isPanelOpen && isTop === isFlipped) {
+          finalY = isTop ? floating.y - heightDelta : floating.y + heightDelta;
+        }
+        if (isLeft || finalY !== floating.y) {
+          setPillPosition(session.id, isLeft ? finalX : floating.x, finalY);
+        }
+        persistCurrentSessions();
+      }
+    };
+
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleUp);
+    target.addEventListener("pointercancel", handleUp);
+  }, [session.id, floating, isPanelOpen, height, containerRef, setPillWidth, setPillPosition]);
+
   const handlePillClick = () => {
     setActivePillId(session.id);
+    useNotificationStore.getState().markReadBySession(session.id);
     if (session.type === "terminal") {
       useTerminalStore.getState().setActiveKey(session.id);
     } else if (session.type === "claude") {
@@ -792,6 +891,24 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
         className="floating-pill-unit__resize-handle floating-pill-unit__resize-handle--right"
         onPointerDown={handleResizePointerDown("right")}
       />
+
+      {/* Corner resize handles */}
+      <div
+        className="floating-pill-unit__resize-corner floating-pill-unit__resize-corner--top-left"
+        onPointerDown={handleCornerResizePointerDown("top-left")}
+      />
+      <div
+        className="floating-pill-unit__resize-corner floating-pill-unit__resize-corner--top-right"
+        onPointerDown={handleCornerResizePointerDown("top-right")}
+      />
+      <div
+        className="floating-pill-unit__resize-corner floating-pill-unit__resize-corner--bottom-left"
+        onPointerDown={handleCornerResizePointerDown("bottom-left")}
+      />
+      <div
+        className="floating-pill-unit__resize-corner floating-pill-unit__resize-corner--bottom-right"
+        onPointerDown={handleCornerResizePointerDown("bottom-right")}
+      />
     </div>
   );
 }
@@ -804,7 +921,6 @@ export function PillBar() {
   const setMaxPanels = useLayoutStore((s) => s.setMaxPanels);
   const removePillSession = useLayoutStore((s) => s.removePillSession);
   const initFloatingPosition = useLayoutStore((s) => s.initFloatingPosition);
-  const isRepo = useGitStore((s) => s.isRepo);
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const contextMenu = useContextMenu();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -834,25 +950,6 @@ export function PillBar() {
     setContainerSize({ w: node.clientWidth, h: node.clientHeight });
   }, [setMaxPanels]);
 
-  // Auto-create a GitHub session when repo detected + github is in default pills but missing
-  useEffect(() => {
-    if (!isRepo || !workspaceRoot) return;
-    const layout = useLayoutStore.getState();
-    const hasGithub = layout.pillBar.sessions.some(
-      (s) => s.projectPath === workspaceRoot && s.type === "github"
-    );
-    if (hasGithub) return;
-    const defaultSessions = useSettingsStore.getState().pills.defaultSessions;
-    if (!defaultSessions.includes("github")) return;
-    const id = genSessionId();
-    useLayoutStore.setState((s) => ({
-      pillBar: {
-        ...s.pillBar,
-        sessions: [...s.pillBar.sessions, { id, type: "github" as const, projectPath: workspaceRoot }],
-      },
-    }));
-    setTimeout(() => persistCurrentSessions(), 0);
-  }, [isRepo, workspaceRoot]);
 
   const dockPill = useLayoutStore((s) => s.dockPill);
   const undockPill = useLayoutStore((s) => s.undockPill);
@@ -951,6 +1048,27 @@ export function PillBar() {
       posIdx++;
     }
   }, [floatingSessions.map((s) => s.id).join(","), initFloatingPosition]);
+
+  // Clamp floating pill positions when the container resizes (e.g. window was bigger
+  // in a previous session and pills were saved at positions now off-screen).
+  useEffect(() => {
+    const { w: cW, h: cH } = containerSize;
+    if (cW === 0 || cH === 0) return;
+    const store = useLayoutStore.getState();
+    const positions = store.pillBar.floatingPositions;
+    for (const session of floatingSessions) {
+      const fp = positions[session.id];
+      if (!fp) continue;
+      // Clamp width first so position clamping uses the correct width
+      const maxW = cW - BOUND_PAD * 2;
+      const clampedWidth = Math.min(fp.width, Math.max(MIN_PILL_WIDTH, maxW));
+      const clamped = clampPosition(fp.x, fp.y, clampedWidth, cW, cH);
+      if (clamped.x !== fp.x || clamped.y !== fp.y || clampedWidth !== fp.width) {
+        if (clampedWidth !== fp.width) store.setPillWidth(session.id, clampedWidth);
+        store.setPillPosition(session.id, clamped.x, clamped.y);
+      }
+    }
+  }, [containerSize.w, containerSize.h]);
 
   // Auto-dock expanded pills that aren't docked or floating yet (e.g. on restore)
   useEffect(() => {

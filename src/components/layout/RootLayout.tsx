@@ -24,6 +24,7 @@ import { ResizeHandle } from "./ResizeHandle";
 import { BannerToastContainer } from "../notifications/BannerToast";
 import { useNotificationStore } from "../../store/notificationStore";
 import { CreateBranchDialog } from "../sidebar/git/CreateBranchDialog";
+import { PublishRepoDialog } from "../sidebar/git/PublishRepoDialog";
 
 const isMacos = platform() === "macos";
 
@@ -165,13 +166,18 @@ function WelcomeScreen() {
     const ws = state.workspaceRoot ?? state.lastWorkspaceRoot;
     const lastSep = ws ? Math.max(ws.lastIndexOf("/"), ws.lastIndexOf("\\")) : -1;
     const parentDir = ws && lastSep > 0 ? ws.substring(0, lastSep) : null;
-    const selected = await invoke<string | null>("pick_folder", { defaultPath: parentDir });
-    if (!selected) return;
-    const name = selected.split(/[\\/]/).pop() ?? selected;
-    const id = selected;
-    addProject({ id, name, path: selected });
-    setActiveProject(id);
-    setWorkspaceRoot(selected);
+    const selected = await invoke<string[]>("pick_folders", { defaultPath: parentDir });
+    if (!selected.length) return;
+
+    for (const folder of selected) {
+      const name = folder.split(/[\\/]/).pop() ?? folder;
+      const id = folder;
+      addProject({ id, name, path: folder });
+    }
+
+    const last = selected[selected.length - 1];
+    setActiveProject(last);
+    setWorkspaceRoot(last);
   };
 
   return (
@@ -226,6 +232,21 @@ function CreateBranchOverlay() {
     <div className="clone-overlay" onMouseDown={() => setCreateBranchOpen(false)}>
       <div onMouseDown={(e) => e.stopPropagation()}>
         <CreateBranchDialog />
+      </div>
+    </div>
+  );
+}
+
+function PublishRepoOverlay() {
+  const publishRepoOpen = useLayoutStore((s) => s.publishRepoOpen);
+  const setPublishRepoOpen = useLayoutStore((s) => s.setPublishRepoOpen);
+
+  if (!publishRepoOpen) return null;
+
+  return (
+    <div className="clone-overlay" onMouseDown={() => setPublishRepoOpen(false)}>
+      <div onMouseDown={(e) => e.stopPropagation()}>
+        <PublishRepoDialog />
       </div>
     </div>
   );
@@ -427,6 +448,7 @@ export function RootLayout() {
       <BannerToastContainer />
       <CloneExplorerOverlay />
       <CreateBranchOverlay />
+      <PublishRepoOverlay />
     </div>
   );
 }

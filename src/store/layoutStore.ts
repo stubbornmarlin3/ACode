@@ -58,11 +58,14 @@ interface LayoutStore {
     dockedSlots: string[];
     /** Remembered floating width before docking, so undock restores it. */
     preDockWidths: Record<string, number>;
+    /** Pills that had their panel open before being collapsed, so re-expanding restores it. */
+    preCollapseOpenPanelIds: string[];
   };
   projects: { projects: Project[]; activeProjectId: string | null };
   settingsOpen: boolean;
   cloneExplorerOpen: boolean;
   createBranchOpen: boolean;
+  publishRepoOpen: boolean;
 
   setSidebarTab: (tab: SidebarTab) => void;
   toggleSidebar: () => void;
@@ -89,6 +92,7 @@ interface LayoutStore {
   setSettingsOpen: (open: boolean) => void;
   setCloneExplorerOpen: (open: boolean) => void;
   setCreateBranchOpen: (open: boolean) => void;
+  setPublishRepoOpen: (open: boolean) => void;
 }
 
 /**
@@ -127,11 +131,12 @@ function sortSessionsByExpanded(sessions: PillSession[], expandedIds: string[]):
 
 export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   sidebar: { activeTab: "explorer", isOpen: true },
-  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {}, floatingPositions: {}, nextZIndex: 1, dockedSlots: [], preDockWidths: {} },
+  pillBar: { sessions: [], activePillId: null, expandedPillIds: [], openPanelIds: [], maxPanels: 1, panelHeights: {}, floatingPositions: {}, nextZIndex: 1, dockedSlots: [], preDockWidths: {}, preCollapseOpenPanelIds: [] },
   projects: { projects: [], activeProjectId: null },
   settingsOpen: false,
   cloneExplorerOpen: false,
   createBranchOpen: false,
+  publishRepoOpen: false,
 
   setSidebarTab: (tab) =>
     set((s) => ({ sidebar: { ...s.sidebar, activeTab: tab } })),
@@ -141,15 +146,21 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
 
   setActivePillId: (id) =>
     set((s) => {
-      // Also expand the pill if not already expanded
-      let expanded = s.pillBar.expandedPillIds;
+      const pb = s.pillBar;
+      let expanded = pb.expandedPillIds;
+      let openPanelIds = pb.openPanelIds;
+      let preCollapseOpenPanelIds = pb.preCollapseOpenPanelIds;
       if (!expanded.includes(id)) {
         expanded = [...expanded, id];
+        // Restore panel-open state if it was open before collapsing
+        if (preCollapseOpenPanelIds.includes(id)) {
+          openPanelIds = [...openPanelIds, id];
+          preCollapseOpenPanelIds = preCollapseOpenPanelIds.filter((pid) => pid !== id);
+        }
       }
-      // Only remove panels for pills that are no longer expanded
-      const openPanelIds = s.pillBar.openPanelIds.filter((pid) => expanded.includes(pid));
-      const sessions = sortSessionsByExpanded(s.pillBar.sessions, expanded);
-      return { pillBar: { ...s.pillBar, sessions, activePillId: id, expandedPillIds: expanded, openPanelIds } };
+      openPanelIds = openPanelIds.filter((pid) => expanded.includes(pid));
+      const sessions = sortSessionsByExpanded(pb.sessions, expanded);
+      return { pillBar: { ...pb, sessions, activePillId: id, expandedPillIds: expanded, openPanelIds, preCollapseOpenPanelIds } };
     }),
 
   togglePillExpanded: (id) =>
@@ -157,14 +168,23 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
       const pb = s.pillBar;
       const isExpanded = pb.expandedPillIds.includes(id);
       if (isExpanded) {
+        // Collapsing: remember if panel was open
+        const hadPanelOpen = pb.openPanelIds.includes(id);
+        const preCollapseOpenPanelIds = hadPanelOpen
+          ? [...pb.preCollapseOpenPanelIds.filter((pid) => pid !== id), id]
+          : pb.preCollapseOpenPanelIds.filter((pid) => pid !== id);
         const expandedPillIds = pb.expandedPillIds.filter((pid) => pid !== id);
         const openPanelIds = pb.openPanelIds.filter((pid) => pid !== id);
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
-        return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds } };
+        return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds, preCollapseOpenPanelIds } };
       } else {
+        // Expanding: restore panel-open state if it was open before
+        const wasOpen = pb.preCollapseOpenPanelIds.includes(id);
+        const openPanelIds = wasOpen ? [...pb.openPanelIds, id] : pb.openPanelIds;
+        const preCollapseOpenPanelIds = pb.preCollapseOpenPanelIds.filter((pid) => pid !== id);
         const expandedPillIds = [...pb.expandedPillIds, id];
         const sessions = sortSessionsByExpanded(pb.sessions, expandedPillIds);
-        return { pillBar: { ...pb, sessions, expandedPillIds } };
+        return { pillBar: { ...pb, sessions, expandedPillIds, openPanelIds, preCollapseOpenPanelIds } };
       }
     }),
 
@@ -204,24 +224,13 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
 
   addPillSession: (type, projectPath) => {
     const id = genSessionId();
-    set((s) => {
-      // Always expand new sessions
-      const expanded = [...s.pillBar.expandedPillIds, id];
-      // Auto-dock if there's room in the bottom row
-      const dockedSlots = [...s.pillBar.dockedSlots];
-      if (dockedSlots.length < s.pillBar.maxPanels) {
-        dockedSlots.push(id);
-      }
-      return {
-        pillBar: {
-          ...s.pillBar,
-          sessions: [...s.pillBar.sessions, { id, type, projectPath }],
-          activePillId: id,
-          expandedPillIds: expanded,
-          dockedSlots,
-        },
-      };
-    });
+    set((s) => ({
+      pillBar: {
+        ...s.pillBar,
+        sessions: [...s.pillBar.sessions, { id, type, projectPath }],
+        activePillId: id,
+      },
+    }));
     return id;
   },
 
@@ -237,12 +246,8 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
         );
         activePillId = sameProject[0]?.id ?? sessions[0]?.id ?? null;
       }
-      let expandedPillIds = s.pillBar.expandedPillIds.filter((pid) => pid !== id);
+      const expandedPillIds = s.pillBar.expandedPillIds.filter((pid) => pid !== id);
       const openPanelIds = s.pillBar.openPanelIds.filter((pid) => pid !== id);
-      // Ensure at least 1 expanded if sessions remain
-      if (expandedPillIds.length === 0 && activePillId) {
-        expandedPillIds = [activePillId];
-      }
       const { [id]: _, ...panelHeights } = s.pillBar.panelHeights;
       const { [id]: _fp, ...floatingPositions } = s.pillBar.floatingPositions;
       const { [id]: _pw, ...preDockWidths } = s.pillBar.preDockWidths;
@@ -411,6 +416,7 @@ export const useLayoutStore = create<LayoutStore>()(devtools((set) => ({
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setCloneExplorerOpen: (open) => set({ cloneExplorerOpen: open }),
   setCreateBranchOpen: (open) => set({ createBranchOpen: open }),
+  setPublishRepoOpen: (open) => set({ publishRepoOpen: open }),
 }), { name: "layoutStore", enabled: import.meta.env.DEV }));
 
 /* ── Custom selector hooks ── */
@@ -444,6 +450,7 @@ export function useLayoutActions() {
       setSettingsOpen: s.setSettingsOpen,
       setCloneExplorerOpen: s.setCloneExplorerOpen,
       setCreateBranchOpen: s.setCreateBranchOpen,
+      setPublishRepoOpen: s.setPublishRepoOpen,
     }))
   );
 }

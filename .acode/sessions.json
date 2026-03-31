@@ -1,24 +1,8 @@
 {
-  "sessions": [
-    "claude",
-    "terminal",
-    "claude",
-    "github"
+  "sessions": [],
+  "activeIndex": 0,
+  "openFiles": [
+    "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
   ],
-  "activeIndex": 1,
-  "openFiles": [],
-  "activeFilePath": null,
-  "panelHeights": [
-    1102,
-    null,
-    698,
-    null
-  ],
-  "expandedIndices": [
-    0,
-    1
-  ],
-  "openPanelIndices": [
-    0
-  ]
+  "activeFilePath": "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
 }

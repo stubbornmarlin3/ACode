@@ -15,6 +15,14 @@ export interface GitStatus {
   behind: number;
   is_repo: boolean;
   has_upstream: boolean;
+  has_remote: boolean;
+}
+
+export interface GitHubCreatedRepo {
+  full_name: string;
+  clone_url: string;
+  ssh_url: string;
+  html_url: string;
 }
 
 export interface GitLogEntry {
@@ -66,6 +74,9 @@ interface GitStore {
   fetchLog: (repoPath: string) => Promise<void>;
   fetchBranches: (repoPath: string) => Promise<void>;
   fetchRemoteInfo: (repoPath: string) => Promise<void>;
+  addRemote: (repoPath: string, name: string, url: string) => Promise<void>;
+  createGitHubRepo: (name: string, isPrivate: boolean, description?: string) => Promise<GitHubCreatedRepo>;
+  publishToGitHub: (repoPath: string, repoName: string, isPrivate: boolean, description?: string) => Promise<void>;
   selectFile: (path: string | null) => void;
   reset: () => void;
 }
@@ -184,6 +195,29 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
     } catch {
       set({ remoteInfo: null });
     }
+  },
+
+  addRemote: async (repoPath, name, url) => {
+    await invoke("git_add_remote", { repoPath, name, url });
+    await get().refreshStatus(repoPath);
+    await get().fetchRemoteInfo(repoPath);
+  },
+
+  createGitHubRepo: async (name, isPrivate, description) => {
+    return await invoke<GitHubCreatedRepo>("github_create_repo", {
+      name,
+      private: isPrivate,
+      description: description ?? null,
+    });
+  },
+
+  publishToGitHub: async (repoPath, repoName, isPrivate, description) => {
+    // 1. Create repo on GitHub
+    const repo = await get().createGitHubRepo(repoName, isPrivate, description);
+    // 2. Add origin remote (use HTTPS URL)
+    await get().addRemote(repoPath, "origin", repo.clone_url);
+    // 3. Push with upstream tracking
+    await get().publishBranch(repoPath);
   },
 
   selectFile: (path) => set({ selectedFile: path }),

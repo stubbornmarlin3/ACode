@@ -11,7 +11,7 @@ function SessionIcon({ type }: { type: string }) {
 }
 
 function BannerItem({ banner }: { banner: BannerToast }) {
-  const [pos, setPos] = useState<{ top?: number; left?: number; right?: number } | null>(null);
+  const [pos, setPos] = useState<{ top?: number; right?: number } | null>(null);
   const isPill = banner.placement === "collapsed-pill";
 
   useEffect(() => {
@@ -32,19 +32,11 @@ function BannerItem({ banner }: { banner: BannerToast }) {
 
       if (el) {
         const rect = el.getBoundingClientRect();
-        if (isPill) {
-          // Position above the collapsed pill, centered horizontally
-          setPos({
-            top: rect.top - 8, // banner's bottom edge above the pill (translateY handles rest)
-            left: rect.left + rect.width / 2,
-          });
-        } else {
-          // Position to the left of the project icon
-          setPos({
-            top: rect.top + rect.height / 2 - 20,
-            right: window.innerWidth - rect.left + 8,
-          });
-        }
+        // Always position to the left of the rail item
+        setPos({
+          top: rect.top + rect.height / 2 - 20,
+          right: window.innerWidth - rect.left + 8,
+        });
       }
     };
 
@@ -55,21 +47,17 @@ function BannerItem({ banner }: { banner: BannerToast }) {
 
   if (!pos) return null;
 
-  const placementClass = isPill ? " banner-toast--pill" : " banner-toast--rail";
-  const fadingClass = banner.fading
-    ? (isPill ? " banner-toast--fading-up" : " banner-toast--fading")
-    : "";
+  const fadingClass = banner.fading ? " banner-toast--fading" : "";
 
   const style: React.CSSProperties = {
     position: "fixed",
     zIndex: 999,
-    ...(isPill
-      ? { top: pos.top, left: pos.left, transform: "translate(-50%, -100%)" }
-      : { top: pos.top, right: pos.right }),
+    top: pos.top,
+    right: pos.right,
   };
 
   return (
-    <div className={`banner-toast${placementClass}${fadingClass}`} style={style}>
+    <div className={`banner-toast banner-toast--rail${fadingClass}`} style={style}>
       <div className="banner-toast__icon">
         <SessionIcon type={banner.notification.sessionType} />
       </div>

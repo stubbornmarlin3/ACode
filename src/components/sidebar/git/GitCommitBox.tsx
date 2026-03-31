@@ -2,9 +2,10 @@ import { useState } from "react";
 import { Check, ArrowUp, ArrowDown, ArrowUpDown, CloudUpload } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
+import { useLayoutStore } from "../../../store/layoutStore";
 import { useNotificationStore } from "../../../store/notificationStore";
 
-type Action = "commit" | "push" | "publish" | "pull" | "sync" | "up-to-date";
+type SyncAction = "push" | "pull" | "sync" | "publish" | "publish-github" | "up-to-date";
 
 export function GitCommitBox() {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
@@ -15,73 +16,97 @@ export function GitCommitBox() {
   const publishBranch = useGitStore((s) => s.publishBranch);
   const pull = useGitStore((s) => s.pull);
   const sync = useGitStore((s) => s.sync);
+  const setPublishRepoOpen = useLayoutStore((s) => s.setPublishRepoOpen);
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [commitBusy, setCommitBusy] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   const changes = status?.changes ?? [];
   const hasAnyChanges = changes.length > 0;
   const ahead = status?.ahead ?? 0;
   const behind = status?.behind ?? 0;
   const hasUpstream = status?.has_upstream ?? false;
+  const hasRemote = status?.has_remote ?? false;
 
-  let action: Action = "commit";
-  if (!hasAnyChanges) {
-    if (!hasUpstream) action = "publish";
-    else if (ahead > 0 && behind > 0) action = "sync";
-    else if (ahead > 0) action = "push";
-    else if (behind > 0) action = "pull";
-    else action = "up-to-date";
-  }
+  // Determine sync action independently of whether there are local changes
+  let syncAction: SyncAction = "up-to-date";
+  if (!hasRemote) syncAction = "publish-github";
+  else if (!hasUpstream) syncAction = "publish";
+  else if (ahead > 0 && behind > 0) syncAction = "sync";
+  else if (ahead > 0) syncAction = "push";
+  else if (behind > 0) syncAction = "pull";
 
-  const canCommit = hasAnyChanges && message.trim().length > 0;
-  const canAct = action === "commit" ? canCommit && !busy : action === "publish" ? !busy : action !== "up-to-date" && !busy;
+  const canCommit = hasAnyChanges && message.trim().length > 0 && !commitBusy;
+  const canSync = syncAction !== "up-to-date" && !syncBusy;
 
-  const actionLabel: Record<Action, string> = {
-    commit: "Commit",
+  const syncLabel: Record<SyncAction, string> = {
     push: `Push${ahead > 0 ? ` (${ahead})` : ""}`,
     publish: "Publish Branch",
+    "publish-github": "Publish to GitHub",
     pull: `Pull${behind > 0 ? ` (${behind})` : ""}`,
-    sync: `Sync (${behind}\u2193 ${ahead}\u2191)`,
+    sync: `Sync (\u2193${behind} \u2191${ahead})`,
     "up-to-date": "Up to date",
   };
 
-  const actionIcon: Record<Action, React.ReactNode> = {
-    commit: <Check size={14} />,
+  const syncIcon: Record<SyncAction, React.ReactNode> = {
     push: <ArrowUp size={14} />,
     publish: <CloudUpload size={14} />,
+    "publish-github": <CloudUpload size={14} />,
     pull: <ArrowDown size={14} />,
     sync: <ArrowUpDown size={14} />,
     "up-to-date": <Check size={14} />,
   };
 
-  const handleAction = async () => {
-    if (!workspaceRoot || !canAct) return;
-    setBusy(true);
+  const notifyError = (msg: string) => {
+    if (!workspaceRoot) return;
+    useNotificationStore.getState().addNotification({
+      sessionId: "git",
+      sessionType: "terminal",
+      projectPath: workspaceRoot,
+      projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
+      message: msg,
+    });
+  };
+
+  const handleCommit = async () => {
+    if (!workspaceRoot || !canCommit) return;
+    setCommitBusy(true);
     try {
-      if (action === "commit") {
-        const unstaged = changes.filter((c) => !c.staged).map((c) => c.path);
-        if (unstaged.length > 0) await stageFiles(workspaceRoot, unstaged);
-        await commit(workspaceRoot, message.trim());
-        setMessage("");
-      } else if (action === "push") await push(workspaceRoot);
-      else if (action === "publish") await publishBranch(workspaceRoot);
-      else if (action === "pull") await pull(workspaceRoot);
-      else if (action === "sync") await sync(workspaceRoot);
+      const unstaged = changes.filter((c) => !c.staged).map((c) => c.path);
+      if (unstaged.length > 0) await stageFiles(workspaceRoot, unstaged);
+      await commit(workspaceRoot, message.trim());
+      setMessage("");
     } catch (e) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
-        message: `Git error: ${String(e)}`,
-      });
+      notifyError(`Git error: ${String(e)}`);
     } finally {
-      setBusy(false);
+      setCommitBusy(false);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!workspaceRoot || !canSync) return;
+
+    // No remote configured — open the publish dialog
+    if (syncAction === "publish-github") {
+      setPublishRepoOpen(true);
+      return;
+    }
+
+    setSyncBusy(true);
+    try {
+      if (syncAction === "push") await push(workspaceRoot);
+      else if (syncAction === "publish") await publishBranch(workspaceRoot);
+      else if (syncAction === "pull") await pull(workspaceRoot);
+      else if (syncAction === "sync") await sync(workspaceRoot);
+    } catch (e) {
+      notifyError(`Git error: ${String(e)}`);
+    } finally {
+      setSyncBusy(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canAct) { e.preventDefault(); handleAction(); }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canCommit) { e.preventDefault(); handleCommit(); }
   };
 
   return (
@@ -89,14 +114,20 @@ export function GitCommitBox() {
       {behind > 0 && hasAnyChanges && (
         <div className="git-commit-box__behind-warning">
           <ArrowDown size={12} />
-          {behind} commit{behind > 1 ? "s" : ""} behind remote
+          {behind} commit{behind > 1 ? "s" : ""} behind remote — commit or stash before pulling
         </div>
       )}
       <textarea className="git-commit-box__input" placeholder="Commit message" value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={handleKeyDown} rows={1} />
-      <button className={`git-commit-box__btn${action !== "commit" ? " git-commit-box__btn--sync" : ""}`} onClick={handleAction} disabled={!canAct}>
-        {actionIcon[action]}
-        {busy ? "..." : actionLabel[action]}
+      <button className="git-commit-box__btn" onClick={handleCommit} disabled={!canCommit}>
+        <Check size={14} />
+        {commitBusy ? "..." : "Commit"}
       </button>
+      {syncAction !== "up-to-date" && (
+        <button className="git-commit-box__btn git-commit-box__btn--sync" onClick={handleSync} disabled={!canSync}>
+          {syncIcon[syncAction]}
+          {syncBusy ? "..." : syncLabel[syncAction]}
+        </button>
+      )}
     </div>
   );
 }

@@ -110,8 +110,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
 
   // Terminal store — per-session state
   const termLastOutputLine = useTerminalStateForKey(sessionId, (s) => s.lastOutputLine);
-  const termShowingOutput = useTerminalStateForKey(sessionId, (s) => s.showingOutput);
-  const termSetShowingOutput = useTerminalStore((s) => s.setShowingOutput);
+  const termCommandPhase = useTerminalStateForKey(sessionId, (s) => s.commandPhase);
   const termIsSpawned = useTerminalStateForKey(sessionId, (s) => s.isSpawned);
   const termShellReady = useTerminalStateForKey(sessionId, (s) => s.shellReady);
   const termSetLastCommand = useTerminalStore((s) => s.setLastCommand);
@@ -135,6 +134,10 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   const githubLastOutputLine = useGitHubStateForKey(sessionId, (s) => s.lastOutputLine);
   const githubShowingOutput = useGitHubStateForKey(sessionId, (s) => s.showingOutput);
 
+  // When true, show the input textarea even while a command is running (for interactive stdin).
+  // Resets on blur or when the command finishes.
+  const [wantsInput, setWantsInput] = useState(false);
+
   // Track Ctrl key for force-kill vs interrupt
   const [ctrlHeld, setCtrlHeld] = useState(false);
   useEffect(() => {
@@ -157,9 +160,15 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   const setActivityStatus = useActivityStore((s) => s.setStatus);
   const clearActivityUnread = useActivityStore((s) => s.clearUnread);
 
-  const isSpinning = activityStatus === "running" && (isTerminal || isClaude);
+  const termIsRunning = isTerminal && (termCommandPhase === "submitted" || termCommandPhase === "capturing");
+  const isSpinning = (isTerminal ? termIsRunning : activityStatus === "running") && (isTerminal || isClaude);
   const spinColor: "blue" | "orange" = isTerminal ? "blue" : "orange";
   const isPulsing = activityStatus === "unread" && (isTerminal || isClaude);
+
+  // Reset wantsInput when the command stops running
+  useEffect(() => {
+    if (!termIsRunning) setWantsInput(false);
+  }, [termIsRunning]);
 
   // Auto-dismiss pulse after 2 cycles when this pill is expanded
   useEffect(() => {
@@ -171,7 +180,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   }, [isExpanded, isPulsing, sessionId, clearActivityUnread]);
 
   const glowClass =
-    activityStatus === "running"
+    (termIsRunning || activityStatus === "running")
       ? isTerminal ? " pill-item--spin-blue" : isClaude ? " pill-item--spin-orange" : ""
     : activityStatus === "unread"
       ? isTerminal
@@ -187,12 +196,14 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     : isClaude
       ? (claudeLastOutputLine === "Thinking..." ? thinkingPhrase : claudeLastOutputLine)
       : githubLastOutputLine;
+  // For terminals, derive showingOutput from commandPhase — no separate boolean to get stale
   const showingOutput = isTerminal
-    ? termShowingOutput
+    ? termCommandPhase !== "idle"
     : isClaude
       ? claudeShowingOutput
       : githubShowingOutput;
-  const hasOutput = showingOutput && lastOutputLine;
+  // During a running terminal command, let the user click to get an input field for stdin
+  const hasOutput = showingOutput && lastOutputLine && !(termIsRunning && wantsInput);
 
   /** Ensure persistent shell is spawned for this terminal session */
   const ensureTerminalSpawned = async () => {
@@ -203,6 +214,14 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     await invoke("spawn_terminal", { key, cwd: workspaceRoot || "/", shell });
     useTerminalStore.getState().setSpawned(key, true);
   };
+
+  // Eagerly spawn the shell when the pill is expanded, so it's ready before the user
+  // opens the panel or types a command.
+  useEffect(() => {
+    if (isTerminal && isExpanded && workspaceRoot) {
+      ensureTerminalSpawned();
+    }
+  }, [isTerminal, isExpanded, workspaceRoot]);
 
   const ensureClaudeSpawned = async () => {
     const key = sessionId;
@@ -219,14 +238,27 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
 
   const PASTE_COLLAPSE_THRESHOLD = 5;
 
+  // Track text before/after the collapsed paste marker
+  const pastedBeforeRef = useRef("");
+  const pastedAfterRef = useRef("");
+
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = e.clipboardData.getData("text");
     const lineCount = pasted.split("\n").length;
     if (lineCount >= PASTE_COLLAPSE_THRESHOLD) {
       e.preventDefault();
-      pastedRef.current = pasted;
-      if (inputRef.current) {
-        inputRef.current.value = `[Pasted ${lineCount} lines]`;
+      const input = inputRef.current;
+      if (input) {
+        const before = input.value.slice(0, input.selectionStart);
+        const after = input.value.slice(input.selectionEnd);
+        pastedRef.current = pasted;
+        pastedBeforeRef.current = before;
+        pastedAfterRef.current = after;
+        const marker = `[Pasted ${lineCount} lines]`;
+        input.value = before + marker + after;
+        // Place cursor right after the marker
+        const cursorPos = before.length + marker.length;
+        input.setSelectionRange(cursorPos, cursorPos);
       }
     } else {
       pastedRef.current = null;
@@ -243,7 +275,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     if (!currentProj?.shellReady) return;
 
     // If a command is already running (between markers), send raw stdin input
-    if (currentProj.capturingCommand) {
+    if (currentProj.commandPhase === "capturing") {
       await invoke("write_terminal", { key: sessionId, data: value + "\n" });
       return;
     }
@@ -251,6 +283,16 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     syncTerminalKey();
     termPushHistory(value);
     termSetLastCommand(value);
+
+    // Transition to "submitted" immediately so the UI shows the spinner + stop button
+    const s = useTerminalStore.getState();
+    const p = s.projects[sessionId];
+    if (p) {
+      useTerminalStore.setState({
+        projects: { ...s.projects, [sessionId]: { ...p, commandPhase: "submitted", lastOutputLine: value } },
+      });
+    }
+    setActivityStatus(sessionId, "running");
 
     // Use the __a helper function (defined at shell spawn) which:
     // 1. Clears the echoed line and re-prints just the command
@@ -264,7 +306,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     }
   };
 
-  const handleClaudeSubmit = async (value: string) => {
+  const handleClaudeSubmit = async (value: string, pasteRange?: { from: number; to: number }) => {
     const key = sessionId;
 
     // Handle /clear as a local command
@@ -286,7 +328,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       return;
     }
     syncClaudeKey();
-    claudeAddUserMessage(value);
+    claudeAddUserMessage(value, pasteRange);
     setActivityStatus(sessionId, "running");
 
     const msg = JSON.stringify({
@@ -312,14 +354,38 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     const input = inputRef.current;
     if (!input || !input.value.trim()) return;
 
-    const value = pastedRef.current ?? input.value.trim();
+    let value: string;
+    let pasteRange: { from: number; to: number } | undefined;
+    if (pastedRef.current !== null) {
+      // Reconstruct: the user may have typed around the paste marker.
+      const raw = input.value;
+      const lineCount = pastedRef.current.split("\n").length;
+      const marker = `[Pasted ${lineCount} lines]`;
+      const markerIdx = raw.indexOf(marker);
+      if (markerIdx !== -1) {
+        const before = raw.slice(0, markerIdx);
+        const after = raw.slice(markerIdx + marker.length);
+        value = (before + pastedRef.current + after).trim();
+        // Compute paste range within the trimmed value
+        const trimStart = (before + pastedRef.current + after).length - (before + pastedRef.current + after).trimStart().length;
+        const pasteFrom = Math.max(0, before.length - trimStart);
+        const pasteTo = pasteFrom + pastedRef.current.length;
+        pasteRange = { from: pasteFrom, to: pasteTo };
+      } else {
+        value = raw.trim();
+      }
+    } else {
+      value = input.value.trim();
+    }
     pastedRef.current = null;
+    pastedBeforeRef.current = "";
+    pastedAfterRef.current = "";
     input.value = "";
 
     if (isTerminal) {
       await handleTerminalSubmit(value);
     } else if (isClaude) {
-      await handleClaudeSubmit(value);
+      await handleClaudeSubmit(value, pasteRange);
     }
   };
 
@@ -408,16 +474,18 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
     if (!termIsSpawned) return;
 
     if (ctrlHeld) {
-      // Force kill — destroy the shell entirely
+      // Force kill — destroy the shell entirely. The terminal-exit event
+      // handler will reset commandPhase to "idle".
       await invoke("kill_terminal", { key: sessionId });
       useTerminalStore.getState().setSpawned(sessionId, false);
     } else {
-      // Send Ctrl+C to interrupt current command
+      // Send Ctrl+C — don't transition state yet. The shell's __a function
+      // traps INT and guarantees the OSC end marker is emitted, which
+      // transitions commandPhase to "done" via useTerminalEvents.
+      // If the process ignores SIGINT, the stop button stays visible so
+      // the user can try again or force kill with Ctrl+click.
       await invoke("write_terminal", { key: sessionId, data: "\x03" });
     }
-
-    setActivityStatus(sessionId, "idle");
-    requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   const handleInterrupt = async (e: React.MouseEvent) => {
@@ -432,8 +500,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
   const handleNewPrompt = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isTerminal) {
-      syncTerminalKey();
-      termSetShowingOutput(false);
+      useTerminalStore.getState().dismissOutput(sessionId);
       clearActivityUnread(sessionId);
     } else if (isClaude) {
       syncClaudeKey();
@@ -497,6 +564,12 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
       <div
         className="pill-item__input-zone"
         onMouseDown={hasOutput ? (e) => { if (e.detail > 1) e.preventDefault(); } : undefined}
+        onClick={hasOutput && termIsRunning ? (e) => {
+          // Single click on output while running → switch to input for interactive stdin
+          e.stopPropagation();
+          setWantsInput(true);
+          requestAnimationFrame(() => inputRef.current?.focus());
+        } : undefined}
         onDoubleClick={hasOutput ? (e) => {
           e.stopPropagation();
           if (!(isClaude && claudeIsStreaming)) {
@@ -519,7 +592,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
                 lastOutputLine
               )}
             </span>
-            {isTerminal && termIsSpawned && activityStatus === "running" ? (
+            {isTerminal && termIsSpawned && termIsRunning ? (
               <button
                 className={`pill-item__new-prompt ${ctrlHeld ? "pill-item__force-kill" : "pill-item__stop"}`}
                 onClick={handleTerminalStop}
@@ -553,21 +626,33 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
             <textarea
               ref={inputRef}
               className="pill-item__input"
-              placeholder={isTerminal && !termShellReady ? "Starting shell..." : placeholder}
+              placeholder={isTerminal && !termShellReady ? "Starting shell..." : (termIsRunning ? "Type input for running process..." : placeholder)}
               disabled={isTerminal && !termShellReady}
               aria-label={`${text} input`}
               rows={1}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
+              onBlur={termIsRunning ? () => setWantsInput(false) : undefined}
             />
-            <button
-              className="pill-item__submit"
-              onClick={() => handleSubmit()}
-              title="Run"
-              aria-label={isTerminal ? "Run command" : "Ask Claude"}
-            >
-              <CornerDownLeft size={14} />
-            </button>
+            {termIsRunning ? (
+              <button
+                className={`pill-item__submit ${ctrlHeld ? "pill-item__force-kill" : "pill-item__stop"}`}
+                onClick={handleTerminalStop}
+                title={ctrlHeld ? "Force kill shell" : "Send Ctrl+C"}
+                aria-label={ctrlHeld ? "Force kill shell" : "Send Ctrl+C"}
+              >
+                {ctrlHeld ? <Skull size={12} /> : <Square size={12} />}
+              </button>
+            ) : (
+              <button
+                className="pill-item__submit"
+                onClick={() => handleSubmit()}
+                title="Run"
+                aria-label={isTerminal ? "Run command" : "Ask Claude"}
+              >
+                <CornerDownLeft size={14} />
+              </button>
+            )}
           </>
         )}
       </div>

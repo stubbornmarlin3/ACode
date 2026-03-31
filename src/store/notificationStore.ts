@@ -45,6 +45,8 @@ interface NotificationStore {
   clearAll: () => void;
   markAllRead: () => void;
   markRead: (id: string) => void;
+  markReadBySession: (sessionId: string) => void;
+  markReadByProject: (projectPath: string) => void;
   setCenterOpen: (open: boolean) => void;
   removeBanner: (id: string) => void;
   fadeBanner: (id: string) => void;
@@ -110,13 +112,18 @@ export const useNotificationStore = create<NotificationStore>()(devtools((set, g
 
       let placement: BannerToast["placement"] = "project-rail";
       if (isActiveProject) {
+        // Only show banner next to collapsed pills; expanded pills → silent
         const isPillExpanded = layout.pillBar.expandedPillIds.includes(notification.sessionId);
-        const isPanelOpen = layout.pillBar.openPanelIds.includes(notification.sessionId);
-        if (isPillExpanded && isPanelOpen) {
+        if (isPillExpanded) {
           placement = "silent";
         } else {
           placement = "collapsed-pill";
         }
+      }
+
+      // Silent notifications don't get added to notification center
+      if (placement === "silent") {
+        return s;
       }
 
       const banner: BannerToast = {
@@ -126,20 +133,18 @@ export const useNotificationStore = create<NotificationStore>()(devtools((set, g
         fading: false,
       };
 
-      const banners = placement !== "silent" ? [...s.banners, banner] : s.banners;
+      const banners = [...s.banners, banner];
 
       // Auto-dismiss banner after 4s (timer is tracked so manual dismiss can cancel it)
-      if (placement !== "silent") {
-        const fadeTimer = setTimeout(() => {
-          get().fadeBanner(notification.id);
-          const removeTimer = setTimeout(() => {
-            get().removeBanner(notification.id);
-            delete _bannerTimers[notification.id];
-          }, 400);
-          _bannerTimers[notification.id] = removeTimer;
-        }, 4000);
-        _bannerTimers[notification.id] = fadeTimer;
-      }
+      const fadeTimer = setTimeout(() => {
+        get().fadeBanner(notification.id);
+        const removeTimer = setTimeout(() => {
+          get().removeBanner(notification.id);
+          delete _bannerTimers[notification.id];
+        }, 400);
+        _bannerTimers[notification.id] = removeTimer;
+      }, 4000);
+      _bannerTimers[notification.id] = fadeTimer;
 
       persistNotifications(notifications);
       return { notifications, unreadCount, banners };
@@ -173,6 +178,26 @@ export const useNotificationStore = create<NotificationStore>()(devtools((set, g
     set((s) => {
       const notifications = s.notifications.map((n) =>
         n.id === id ? { ...n, read: true } : n
+      );
+      const unreadCount = notifications.filter((n) => !n.read).length;
+      persistNotifications(notifications);
+      return { notifications, unreadCount };
+    }),
+
+  markReadBySession: (sessionId) =>
+    set((s) => {
+      const notifications = s.notifications.map((n) =>
+        n.sessionId === sessionId ? { ...n, read: true } : n
+      );
+      const unreadCount = notifications.filter((n) => !n.read).length;
+      persistNotifications(notifications);
+      return { notifications, unreadCount };
+    }),
+
+  markReadByProject: (projectPath) =>
+    set((s) => {
+      const notifications = s.notifications.map((n) =>
+        n.projectPath === projectPath ? { ...n, read: true } : n
       );
       const unreadCount = notifications.filter((n) => !n.read).length;
       persistNotifications(notifications);

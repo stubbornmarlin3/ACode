@@ -57,8 +57,6 @@ export interface EditorSettings {
   fontFamily: string;
   tabSize: number;
   lineWrapping: boolean;
-  minimap: boolean;
-  lineNumbers: boolean;
 }
 
 export interface TerminalSettings {
@@ -69,7 +67,6 @@ export interface TerminalSettings {
 
 export interface AppearanceSettings {
   sidebarWidth: number;
-  pillPanelHeight: number;
   /** Default panel height in px for newly created pills */
   defaultPanelHeight: number;
 }
@@ -114,8 +111,6 @@ const DEFAULT_EDITOR: EditorSettings = {
   fontFamily: "JetBrains Mono",
   tabSize: 2,
   lineWrapping: true,
-  minimap: false,
-  lineNumbers: true,
 };
 
 function getDefaultShell(): string {
@@ -133,8 +128,7 @@ const DEFAULT_TERMINAL: TerminalSettings = {
 
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   sidebarWidth: 240,
-  pillPanelHeight: 70,
-  defaultPanelHeight: 350,
+  defaultPanelHeight: 600,
 };
 
 const DEFAULT_PILLS: PillsSettings = {

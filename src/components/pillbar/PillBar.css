@@ -117,6 +117,34 @@
   z-index: 1;
 }
 
+.floating-pill-unit__resize-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  z-index: 2;
+  background: transparent;
+}
+.floating-pill-unit__resize-corner--top-left {
+  top: -4px;
+  left: -4px;
+  cursor: nwse-resize;
+}
+.floating-pill-unit__resize-corner--top-right {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+.floating-pill-unit__resize-corner--bottom-left {
+  bottom: -4px;
+  left: -4px;
+  cursor: nesw-resize;
+}
+.floating-pill-unit__resize-corner--bottom-right {
+  bottom: -4px;
+  right: -4px;
+  cursor: nwse-resize;
+}
+
 /* ── Dock slots ── */
 .dock-slot {
   position: absolute;

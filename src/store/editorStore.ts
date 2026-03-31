@@ -113,6 +113,7 @@ interface ProjectEditorState {
   pillBarState: PillBarState; // kept for cache compat
   expandedPillIds: string[];
   openPanelIds: string[];
+  dockedSlots: string[];
   terminalShowingOutput: boolean;
 }
 
@@ -216,7 +217,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
           pillBarState: layoutState.pillBar.expandedPillIds.length > 0 ? "panel-open" as PillBarState : "idle" as PillBarState,
           expandedPillIds: layoutState.pillBar.expandedPillIds.filter((id) => leavingIds.has(id)),
           openPanelIds: layoutState.pillBar.openPanelIds.filter((id) => leavingIds.has(id)),
-          terminalShowingOutput: termProj?.showingOutput ?? false,
+          dockedSlots: layoutState.pillBar.dockedSlots.filter((id) => leavingIds.has(id)),
+          terminalShowingOutput: termProj ? termProj.commandPhase !== "idle" : false,
         },
       }, path);
     }
@@ -261,6 +263,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
     let savedData: SavedSessions | null = null;
     let restoredExpandedIds: string[] | null = null;
     let restoredOpenPanelIds: string[] | null = null;
+    let restoredDockedSlots: string[] | null = null;
     if (existingSessions.length === 0) {
       savedData = await loadSavedSessions(path);
 
@@ -269,7 +272,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       const isNewFormat = savedSessions && savedSessions.length > 0 && typeof savedSessions[0] === "object";
       const types: PillSessionType[] = isNewFormat
         ? (savedSessions as SavedPillSession[]).map((s) => s.type)
-        : (savedSessions as PillSessionType[] | undefined) ?? useSettingsStore.getState().pills.defaultSessions;
+        : (savedSessions as PillSessionType[] | undefined) ?? [];
 
       const newSessions = types.map((type) => ({
         id: genSessionId(),
@@ -300,10 +303,10 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
         });
 
         // Restore docked order
-        const dockedSlots: string[] = [];
+        restoredDockedSlots = [];
         if (savedData?.dockedOrder) {
           for (const idx of savedData.dockedOrder) {
-            if (idx >= 0 && idx < newSessions.length) dockedSlots.push(newSessions[idx].id);
+            if (idx >= 0 && idx < newSessions.length) restoredDockedSlots.push(newSessions[idx].id);
           }
         }
 
@@ -316,7 +319,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
               nextZIndex: Math.max(s.pillBar.nextZIndex, newSessions.length + 1),
             }),
             ...(Object.keys(restoredPreDockWidths).length > 0 && { preDockWidths: { ...s.pillBar.preDockWidths, ...restoredPreDockWidths } }),
-            ...(dockedSlots.length > 0 && { dockedSlots }),
+            ...(restoredDockedSlots && restoredDockedSlots.length > 0 && { dockedSlots: restoredDockedSlots }),
           },
         }));
       }
@@ -336,8 +339,9 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       });
       const expandedPillIds = restoredExpandedIds ?? cached.expandedPillIds ?? (activeId ? [activeId] : []);
       const openPanelIds = restoredOpenPanelIds ?? cached.openPanelIds ?? [];
+      const dockedSlots = restoredDockedSlots ?? cached.dockedSlots ?? [];
       useLayoutStore.setState((s) => ({
-        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds, openPanelIds },
+        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds, openPanelIds, dockedSlots },
       }));
     } else {
       const tree = await invoke<FileEntry[]>("read_dir_tree", {
@@ -356,7 +360,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
         projectStates: nextProjectStates,
       });
       useLayoutStore.setState((s) => ({
-        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds, openPanelIds },
+        pillBar: { ...s.pillBar, sessions, activePillId: activeId, expandedPillIds, openPanelIds, dockedSlots: restoredDockedSlots ?? [] },
       }));
 
       // Restore saved open files from disk

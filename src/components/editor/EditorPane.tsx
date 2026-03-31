@@ -3,19 +3,26 @@ import { EditorView, basicSetup } from "codemirror";
 import { EditorState, Compartment } from "@codemirror/state";
 import { indentUnit } from "@codemirror/language";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { invoke } from "@tauri-apps/api/core";
 import { platform } from "@tauri-apps/plugin-os";
 import { clipboardWrite, clipboardRead } from "../../utils/clipboard";
 import {
   Copy,
   ClipboardPaste,
   Scissors,
-  Search,
   Undo2,
   Redo2,
+  Terminal as TerminalIcon,
+  Github,
 } from "lucide-react";
 import { useEditorStore } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
+import { useLayoutStore, type PillSessionType } from "../../store/layoutStore";
+import { useTerminalStore } from "../../store/terminalStore";
+import { useClaudeStore } from "../../store/claudeStore";
+import { useGitHubStore } from "../../store/githubStore";
+import { useGitStore } from "../../store/gitStore";
+import { persistCurrentSessions } from "../../store/editorStore";
+import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorPane.css";
 
@@ -273,98 +280,119 @@ export function EditorPane() {
     }
   }, [activeFile?.content]);
 
+  const isRepo = useGitStore((s) => s.isRepo);
+  const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
+
+  const lastContextPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleAddSession = useCallback((type: PillSessionType) => {
+    if (!workspaceRoot) return;
+    const id = useLayoutStore.getState().addPillSession(type, workspaceRoot);
+    if (type === "terminal") {
+      useTerminalStore.getState().setActiveKey(id);
+    } else if (type === "claude") {
+      useClaudeStore.getState().setActiveKey(id);
+    } else if (type === "github") {
+      useGitHubStore.getState().setActiveKey(id);
+    }
+    // Expand the pill (adds to expandedPillIds)
+    useLayoutStore.getState().setActivePillId(id);
+
+    // Float at the mouse position with panel open
+    const container = document.querySelector(".editor-card") as HTMLElement | null;
+    if (container) {
+      const rect = container.getBoundingClientRect();
+      const defaultWidth = 600;
+      const pillH = 40;
+      const x = Math.max(8, Math.min(lastContextPos.current.x - rect.left - defaultWidth / 2, rect.width - defaultWidth - 8));
+      const y = Math.max(8 + pillH, Math.min(lastContextPos.current.y - rect.top, rect.height - pillH - 8));
+
+      useLayoutStore.getState().initFloatingPosition(id, x, y, defaultWidth);
+      useLayoutStore.getState().togglePanelOpen(id);
+    }
+
+    persistCurrentSessions();
+  }, [workspaceRoot]);
+
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      lastContextPos.current = { x: e.clientX, y: e.clientY };
       const view = viewRef.current;
-      if (!view) return;
+      const items: MenuEntry[] = [];
 
-      const hasSelection = view.state.selection.main.from !== view.state.selection.main.to;
+      // Editor items only when a file is open
+      if (view && activeFilePath) {
+        const hasSelection = view.state.selection.main.from !== view.state.selection.main.to;
+        const mod = platform() === "macos" ? "Cmd" : "Ctrl";
 
-      const mod = platform() === "macos" ? "Cmd" : "Ctrl";
+        items.push(
+          {
+            label: "Cut",
+            icon: <Scissors size={12} />,
+            shortcut: `${mod}+X`,
+            action: () => {
+              if (hasSelection) {
+                const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+                clipboardWrite(sel);
+                view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
+              }
+            },
+          },
+          {
+            label: "Copy",
+            icon: <Copy size={12} />,
+            shortcut: `${mod}+C`,
+            action: () => {
+              if (hasSelection) {
+                const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+                clipboardWrite(sel);
+              }
+            },
+          },
+          {
+            label: "Paste",
+            icon: <ClipboardPaste size={12} />,
+            shortcut: `${mod}+V`,
+            action: async () => {
+              const text = await clipboardRead();
+              if (text) {
+                view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: text } });
+              }
+            },
+          },
+          "separator",
+          {
+            label: "Undo",
+            icon: <Undo2 size={12} />,
+            shortcut: `${mod}+Z`,
+            action: () => {
+              import("@codemirror/commands").then(({ undo }) => undo(view));
+            },
+          },
+          {
+            label: "Redo",
+            icon: <Redo2 size={12} />,
+            shortcut: platform() === "macos" ? "Cmd+Shift+Z" : "Ctrl+Y",
+            action: () => {
+              import("@codemirror/commands").then(({ redo }) => redo(view));
+            },
+          },
+          "separator",
+        );
+      }
 
-      const items: MenuEntry[] = [
-        {
-          label: "Cut",
-          icon: <Scissors size={12} />,
-          shortcut: `${mod}+X`,
-          action: () => {
-            if (hasSelection) {
-              const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-              clipboardWrite(sel);
-              view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
-            }
-          },
-        },
-        {
-          label: "Copy",
-          icon: <Copy size={12} />,
-          shortcut: `${mod}+C`,
-          action: () => {
-            if (hasSelection) {
-              const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-              clipboardWrite(sel);
-            }
-          },
-        },
-        {
-          label: "Paste",
-          icon: <ClipboardPaste size={12} />,
-          shortcut: `${mod}+V`,
-          action: async () => {
-            const text = await clipboardRead();
-            if (text) {
-              view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: text } });
-            }
-          },
-        },
-        "separator",
-        {
-          label: "Find",
-          icon: <Search size={12} />,
-          shortcut: `${mod}+F`,
-          action: () => {
-            // Trigger CodeMirror's built-in search
-            const isMac = platform() === "macos";
-            document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: !isMac, metaKey: isMac }));
-          },
-        },
-        "separator",
-        {
-          label: "Undo",
-          icon: <Undo2 size={12} />,
-          shortcut: `${mod}+Z`,
-          action: () => {
-            import("@codemirror/commands").then(({ undo }) => undo(view));
-          },
-        },
-        {
-          label: "Redo",
-          icon: <Redo2 size={12} />,
-          shortcut: platform() === "macos" ? "Cmd+Shift+Z" : "Ctrl+Y",
-          action: () => {
-            import("@codemirror/commands").then(({ redo }) => redo(view));
-          },
-        },
-      ];
-
-      if (activeFilePath) {
-        items.push("separator");
-        items.push({
-          label: "Save",
-          shortcut: platform() === "macos" ? "Cmd+S" : "Ctrl+S",
-          action: async () => {
-            const file = useEditorStore.getState().openFiles.find((f) => f.path === activeFilePath);
-            if (file) {
-              await invoke("save_file", { path: activeFilePath, content: file.content });
-              useEditorStore.getState().markFileSaved(activeFilePath);
-            }
-          },
-        });
+      // Add session items
+      items.push(
+        { label: "Terminal", icon: <TerminalIcon size={12} />, action: () => handleAddSession("terminal") },
+        { label: "Claude", icon: <ClaudeIcon size={12} />, action: () => handleAddSession("claude") },
+      );
+      if (isRepo) {
+        items.push({ label: "GitHub", icon: <Github size={12} />, action: () => handleAddSession("github") });
       }
 
       contextMenu.show(e, items);
     },
-    [activeFilePath, contextMenu]
+    [activeFilePath, contextMenu, isRepo, handleAddSession]
   );
 
   return (

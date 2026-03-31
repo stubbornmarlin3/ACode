@@ -411,8 +411,43 @@ function ToolProgress({ name, input }: { name: string; input: Record<string, unk
 
 const PASTE_DISPLAY_THRESHOLD = 5;
 
-function UserText({ text }: { text: string }) {
+function UserText({ text, pasteRange }: { text: string; pasteRange?: { from: number; to: number } }) {
   const [expanded, setExpanded] = useState(false);
+
+  // If we have an explicit paste range, use it to collapse just the pasted portion
+  if (pasteRange) {
+    const before = text.slice(0, pasteRange.from);
+    const pasted = text.slice(pasteRange.from, pasteRange.to);
+    const after = text.slice(pasteRange.to);
+    const pastedLines = pasted.split("\n").length;
+
+    if (pastedLines < PASTE_DISPLAY_THRESHOLD) {
+      return <>{text}</>;
+    }
+
+    if (expanded) {
+      return (
+        <>
+          {text}
+          <button className="claude-chat__paste-toggle" onClick={() => setExpanded(false)}>
+            Collapse
+          </button>
+        </>
+      );
+    }
+
+    return (
+      <>
+        {before}
+        <button className="claude-chat__paste-toggle" onClick={() => setExpanded(true)}>
+          [Pasted {pastedLines} lines]
+        </button>
+        {after}
+      </>
+    );
+  }
+
+  // Fallback: no paste metadata — collapse entire message if long
   const lines = text.split("\n");
 
   if (lines.length < PASTE_DISPLAY_THRESHOLD) {
@@ -423,30 +458,17 @@ function UserText({ text }: { text: string }) {
     return (
       <>
         {text}
-        <button
-          className="claude-chat__paste-toggle"
-          onClick={() => setExpanded(false)}
-        >
+        <button className="claude-chat__paste-toggle" onClick={() => setExpanded(false)}>
           Collapse
         </button>
       </>
     );
   }
 
-  // Show first line (if it looks like a prompt) + collapsed indicator
-  const firstLine = lines[0].trim();
-  const hasPrompt = firstLine.length > 0 && !firstLine.startsWith(" ");
-
   return (
-    <>
-      {hasPrompt && <>{firstLine}{"\n"}</>}
-      <button
-        className="claude-chat__paste-toggle"
-        onClick={() => setExpanded(true)}
-      >
-        [Pasted {lines.length} lines]
-      </button>
-    </>
+    <button className="claude-chat__paste-toggle" onClick={() => setExpanded(true)}>
+      [Pasted {lines.length} lines]
+    </button>
   );
 }
 
@@ -487,7 +509,7 @@ function MessageBlock({
 
       {msg.text && (
         <div className="claude-chat__content">
-          {isUser ? <UserText text={msg.text} /> : <Markdown>{msg.text}</Markdown>}
+          {isUser ? <UserText text={msg.text} pasteRange={msg.pasteRange} /> : <Markdown>{msg.text}</Markdown>}
         </div>
       )}
 
@@ -661,6 +683,8 @@ function InteractionCard({
   }
 
   // ── ExitPlanMode — show the plan + implement / continue planning ──
+  // Don't show if already resolved (e.g. session resume replay)
+  if (interaction.category === "plan-exit" && isResolved) return null;
   if (interaction.category === "plan-exit") {
     return (
       <div className="claude-chat__interaction claude-chat__interaction--plan">

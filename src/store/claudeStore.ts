@@ -22,6 +22,8 @@ export interface ChatMessage {
   thinking?: string;
   toolUses?: ToolUseEntry[];
   toolResults?: ToolResultEntry[];
+  /** Character offsets of a collapsed paste within `text` */
+  pasteRange?: { from: number; to: number };
 }
 
 export interface SessionInfo {
@@ -95,6 +97,8 @@ export interface ClaudeProjectState {
   lastSessionId: string | null;
   /** Tool uses awaiting user interaction (only in interactive permission mode) */
   pendingInteractions: PendingInteraction[];
+  /** Tool use IDs that have been resolved — prevents race conditions and session-resume ghosts */
+  resolvedToolUseIds: string[];
   /** Whether Claude is currently in plan mode */
   isInPlanMode: boolean;
   /** Generation counter — incremented on each spawn so stale output from killed processes is ignored */
@@ -116,6 +120,7 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   selectedModel: null,
   lastSessionId: null,
   pendingInteractions: [],
+  resolvedToolUseIds: [],
   isInPlanMode: false,
   generation: -1,
 };
@@ -127,7 +132,7 @@ interface ClaudeStore {
   projects: Record<string, ClaudeProjectState>;
 
   setActiveKey: (key: string | null) => void;
-  addUserMessage: (content: string) => void;
+  addUserMessage: (content: string, pasteRange?: { from: number; to: number }) => void;
   processStreamChunk: (key: string, chunk: string, generation: number) => void;
   setShowingOutput: (showing: boolean) => void;
   setProjectSpawned: (key: string, spawned: boolean, generation?: number) => void;
@@ -188,13 +193,15 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
 
   setActiveKey: (key) => set({ activeKey: key }),
 
-  addUserMessage: (content) => {
+  addUserMessage: (content, pasteRange) => {
     const { activeKey, projects } = get();
     if (!activeKey) return;
     const proj = getProj(projects, activeKey);
+    const msg: ChatMessage = { role: "user", text: content };
+    if (pasteRange) msg.pasteRange = pasteRange;
     set({
       projects: setProj(projects, activeKey, {
-        messages: [...proj.messages, { role: "user", text: content }],
+        messages: [...proj.messages, msg],
         isStreaming: true,
         lastOutputLine: "Thinking...",
         showingOutput: true,
@@ -228,6 +235,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     let activeToolUse = proj.activeToolUse;
     let lastSessionId = proj.lastSessionId;
     let pendingInteractions = [...proj.pendingInteractions];
+    const resolvedIds = new Set(proj.resolvedToolUseIds);
     let isInPlanMode = proj.isInPlanMode;
     // Always bypass CLI permissions; only intercept questions & plan approval
 
@@ -381,15 +389,18 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
               category = "plan-enter";
             }
 
-            pendingInteractions.push({
-              toolUseId: tu.id,
-              toolName: tu.name,
-              input: tu.input,
-              questions,
-              plan,
-              category,
-              timestamp: Date.now(),
-            });
+            // Skip if this tool use was already resolved (race condition or session resume)
+            if (!resolvedIds.has(tu.id)) {
+              pendingInteractions.push({
+                toolUseId: tu.id,
+                toolName: tu.name,
+                input: tu.input,
+                questions,
+                plan,
+                category,
+                timestamp: Date.now(),
+              });
+            }
           }
         }
 
@@ -476,8 +487,15 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
       }
     }
 
+    // Re-read current resolved IDs to catch any that were resolved concurrently
+    // (e.g. resolveInteraction called while this chunk was being processed)
+    const currentResolved = new Set(getProj(get().projects, key).resolvedToolUseIds);
+    const finalPendingInteractions = pendingInteractions.filter(
+      (p) => !currentResolved.has(p.toolUseId)
+    );
+
     set({
-      projects: setProj(state.projects, key, {
+      projects: setProj(get().projects, key, {
         messages,
         sessionInfo,
         totalCostUsd,
@@ -489,7 +507,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
         streamingThinking,
         activeToolUse,
         lastSessionId,
-        pendingInteractions,
+        pendingInteractions: finalPendingInteractions,
         isInPlanMode,
       }),
     });
@@ -553,7 +571,8 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     });
     await invoke("write_claude", { key, data: msg });
 
-    // Optimistically remove from pending
+    // Optimistically remove from pending and mark as resolved to prevent
+    // race conditions with processStreamChunk and session resume replays
     const { projects } = get();
     const proj = projects[key];
     if (proj) {
@@ -562,6 +581,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
           pendingInteractions: proj.pendingInteractions.filter(
             (p) => p.toolUseId !== toolUseId,
           ),
+          resolvedToolUseIds: [...proj.resolvedToolUseIds, toolUseId],
         }),
       });
     }

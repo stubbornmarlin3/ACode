@@ -135,6 +135,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
                 behind: 0,
                 is_repo: false,
                 has_upstream: false,
+                has_remote: false,
             });
         }
     };
@@ -240,6 +241,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
     }
 
     let _ = workdir; // suppress unused warning
+    let has_remote = repo.find_remote("origin").is_ok();
 
     Ok(GitStatus {
         changes,
@@ -248,6 +250,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
         behind,
         is_repo: true,
         has_upstream,
+        has_remote,
     })
     })
     .await
@@ -726,12 +729,41 @@ pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Check if the working directory has uncommitted changes (staged or unstaged).
+fn has_uncommitted_changes(repo: &Repository) -> bool {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(false)
+        .include_ignored(false);
+    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        statuses.iter().any(|entry| {
+            let s = entry.status();
+            s.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::WT_MODIFIED
+                    | git2::Status::WT_DELETED
+                    | git2::Status::WT_RENAMED,
+            )
+        })
+    } else {
+        false
+    }
+}
+
 /// Pull from remote (fetch + fast-forward merge).
+/// Refuses to pull if there are uncommitted changes to avoid data loss.
 #[tauri::command]
 pub async fn git_pull(repo_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let repo = Repository::discover(&repo_path)
             .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+        // Guard: refuse to pull with uncommitted changes
+        if has_uncommitted_changes(&repo) {
+            return Err("Cannot pull with uncommitted changes. Commit or stash your changes first.".to_string());
+        }
 
         let branch = repo
             .head()
@@ -775,11 +807,15 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
                 .map_err(|e| format!("Failed to fast-forward: {}", e))?;
             repo.set_head(&refname)
                 .map_err(|e| format!("Failed to set HEAD: {}", e))?;
+
+            // Use checkout (not hard reset) to update working directory safely
             let commit_obj = repo
                 .find_object(fetch_commit.id(), None)
                 .map_err(|e| format!("Failed to find commit object: {}", e))?;
-            repo.reset(&commit_obj, git2::ResetType::Hard, None)
-                .map_err(|e| format!("Failed to reset to new head: {}", e))?;
+            let mut checkout = git2::build::CheckoutBuilder::new();
+            checkout.safe();
+            repo.checkout_tree(&commit_obj, Some(&mut checkout))
+                .map_err(|e| format!("Failed to checkout new head: {}", e))?;
             return Ok(());
         }
 
@@ -831,4 +867,14 @@ fn parse_github_remote(url: &str) -> Option<(String, String)> {
     let owner = parts.next()?.to_string();
     let repo = parts.next()?.to_string();
     Some((owner, repo))
+}
+
+/// Add a remote to the repository.
+#[tauri::command]
+pub fn git_add_remote(repo_path: String, name: String, url: String) -> Result<(), String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+    repo.remote(&name, &url)
+        .map_err(|e| format!("Failed to add remote '{}': {}", name, e))?;
+    Ok(())
 }

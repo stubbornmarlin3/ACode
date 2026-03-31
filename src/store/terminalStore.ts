@@ -7,36 +7,45 @@ const MAX_BUFFER_SIZE = 512 * 1024;
 /** Max number of commands to keep in history per terminal session. */
 const MAX_HISTORY_SIZE = 500;
 
+/**
+ * Command lifecycle state machine:
+ *   idle -> submitted -> capturing -> done -> idle
+ *
+ * - idle:       No command running. Pill shows the input textarea.
+ * - submitted:  User pressed Enter, waiting for OSC start marker. Shows spinner + stop.
+ * - capturing:  Between OSC start/end markers, output flowing. Shows spinner + stop.
+ * - done:       Command finished. Shows last output + "new prompt" button.
+ */
+export type CommandPhase = "idle" | "submitted" | "capturing" | "done";
+
 export interface TerminalProjectState {
   isSpawned: boolean;
   /** Shell has finished initializing (__a defined, ready marker received). */
   shellReady: boolean;
   lastOutputLine: string;
-  showingOutput: boolean;
   lastCommand: string;
   history: string[];
   historyIndex: number;
   outputBuffer: string;
-  /** Whether we're capturing command output between OSC markers. */
-  capturingCommand: boolean;
   /** Raw captured output between start/end markers. */
   capturedRaw: string;
   /** Shell's current working directory, updated after each command via OSC 7770;D. */
   cwd: string;
+  /** Single source of truth for command lifecycle. */
+  commandPhase: CommandPhase;
 }
 
 const EMPTY_PROJECT: TerminalProjectState = {
   isSpawned: false,
   shellReady: false,
   lastOutputLine: "",
-  showingOutput: false,
   lastCommand: "",
   history: [],
   historyIndex: -1,
   outputBuffer: "",
-  capturingCommand: false,
   capturedRaw: "",
   cwd: "",
+  commandPhase: "idle",
 };
 
 interface TerminalStore {
@@ -44,14 +53,15 @@ interface TerminalStore {
   projects: Record<string, TerminalProjectState>;
 
   setActiveKey: (key: string | null) => void;
-  setLastOutputLine: (line: string) => void;
-  setShowingOutput: (showing: boolean) => void;
   setSpawned: (key: string, spawned: boolean) => void;
   setLastCommand: (cmd: string) => void;
   pushHistory: (cmd: string) => void;
   setHistoryIndex: (index: number) => void;
   appendOutput: (key: string, data: string) => void;
   clearOutputBuffer: (key: string) => void;
+  setCommandPhase: (key: string, phase: CommandPhase) => void;
+  /** Transition done -> idle (user clicked "new prompt"). */
+  dismissOutput: (key: string) => void;
 }
 
 function getProj(projects: Record<string, TerminalProjectState>, key: string | null): TerminalProjectState {
@@ -73,18 +83,6 @@ export const useTerminalStore = create<TerminalStore>()(devtools((set, get) => (
   projects: {},
 
   setActiveKey: (key) => set({ activeKey: key }),
-
-  setLastOutputLine: (line) => {
-    const { activeKey, projects } = get();
-    if (!activeKey) return;
-    set({ projects: setProj(projects, activeKey, { lastOutputLine: line, showingOutput: true }) });
-  },
-
-  setShowingOutput: (showing) => {
-    const { activeKey, projects } = get();
-    if (!activeKey) return;
-    set({ projects: setProj(projects, activeKey, { showingOutput: showing }) });
-  },
 
   setSpawned: (key, spawned) => {
     const { projects } = get();
@@ -132,6 +130,18 @@ export const useTerminalStore = create<TerminalStore>()(devtools((set, get) => (
     const proj = projects[key];
     if (!proj) return;
     set({ projects: { ...projects, [key]: { ...proj, outputBuffer: "" } } });
+  },
+
+  setCommandPhase: (key, phase) => {
+    const { projects } = get();
+    set({ projects: setProj(projects, key, { commandPhase: phase }) });
+  },
+
+  dismissOutput: (key) => {
+    const { projects } = get();
+    const proj = projects[key];
+    if (!proj || proj.commandPhase !== "done") return;
+    set({ projects: setProj(projects, key, { commandPhase: "idle" }) });
   },
 }), { name: "terminalStore", enabled: import.meta.env.DEV }));
 
