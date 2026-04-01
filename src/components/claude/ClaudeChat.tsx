@@ -525,11 +525,22 @@ function MessageBlock({
 
       {msg.thinking && <ThinkingBlock text={msg.thinking} />}
 
-      {msg.text && (
-        <div className="claude-chat__content">
-          {isUser ? <UserText text={msg.text} pasteRange={msg.pasteRange} /> : <Markdown>{msg.text}</Markdown>}
-        </div>
-      )}
+      {msg.text && (() => {
+        const interrupted = !isUser && msg.text.endsWith("<!-- interrupted -->");
+        const displayText = interrupted ? msg.text.replace(/\n*<!-- interrupted -->$/, "") : msg.text;
+        return (
+          <>
+            {displayText && (
+              <div className="claude-chat__content">
+                {isUser ? <UserText text={displayText} pasteRange={msg.pasteRange} /> : <Markdown>{displayText}</Markdown>}
+              </div>
+            )}
+            {interrupted && (
+              <span className="claude-chat__interrupted">— interrupted</span>
+            )}
+          </>
+        );
+      })()}
 
       {msg.toolUses && msg.toolUses.length > 0 && (
         <div className="claude-chat__tools">
@@ -743,6 +754,9 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+/** Seconds of no output before showing "seems stuck" hint */
+const STALE_THRESHOLD_MS = 90_000;
+
 export function ClaudeChat() {
   const sessionKey = usePillSessionId();
   const thinkingPhrase = useThinkingPhrase();
@@ -754,7 +768,23 @@ export function ClaudeChat() {
   const activeToolUse = useClaudeStateForKey(sessionKey, (s) => s.activeToolUse);
   const pendingInteractions = useClaudeStateForKey(sessionKey, (s) => s.pendingInteractions);
   const isInPlanMode = useClaudeStateForKey(sessionKey, (s) => s.isInPlanMode);
+  const lastActivityAt = useClaudeStateForKey(sessionKey, (s) => s.lastActivityAt);
+  const interruptClaude = useClaudeStore((s) => s.interruptClaude);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Stale detection: re-check every 5s while streaming
+  const [isStale, setIsStale] = useState(false);
+  useEffect(() => {
+    if (!isStreaming) { setIsStale(false); return; }
+    const check = () => {
+      // lastActivityAt === 0 means no output yet (just spawned) — not stale
+      if (!lastActivityAt) { setIsStale(false); return; }
+      setIsStale(Date.now() - lastActivityAt >= STALE_THRESHOLD_MS);
+    };
+    check();
+    const id = setInterval(check, 5_000);
+    return () => clearInterval(id);
+  }, [isStreaming, lastActivityAt]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -869,16 +899,31 @@ export function ClaudeChat() {
                   />
                 )}
 
-                {!streamingText && !streamingThinking && !activeToolUse &&
-                  (!lastMsg || lastMsg.role !== "assistant") && (
-                  <div className="claude-chat__message claude-chat__message--assistant">
-                    <span className="claude-chat__role">Claude</span>
+                {!streamingText && !streamingThinking && !activeToolUse && (
+                  <div className={`claude-chat__message claude-chat__message--assistant${
+                    streamIsNewGroup ? "" : " claude-chat__message--continuation"
+                  }`}>
+                    {streamIsNewGroup && (
+                      <span className="claude-chat__role">Claude</span>
+                    )}
                     <div className="claude-chat__content">
                       <span className="claude-chat__thinking-placeholder">
                         <span className="claude-chat__tool-progress-spinner" />
                         {thinkingPhrase}
                       </span>
                     </div>
+                  </div>
+                )}
+
+                {isStale && sessionKey && (
+                  <div className="claude-chat__stale-hint">
+                    <span>No output for a while — Claude may be stuck.</span>
+                    <button
+                      className="claude-chat__stale-interrupt"
+                      onClick={() => interruptClaude(sessionKey)}
+                    >
+                      Interrupt
+                    </button>
                   </div>
                 )}
               </div>

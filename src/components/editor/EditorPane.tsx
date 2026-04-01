@@ -14,7 +14,7 @@ import {
   Terminal as TerminalIcon,
   Github,
 } from "lucide-react";
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, isMarkdownFile } from "../../store/editorStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useLayoutStore, type PillSessionType } from "../../store/layoutStore";
 import { useTerminalStore } from "../../store/terminalStore";
@@ -25,6 +25,9 @@ import { persistCurrentSessions } from "../../store/editorStore";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorPane.css";
+
+/** Shared ref so sibling components (e.g. MarkdownPreview) can access the EditorView */
+export let editorViewRef: { current: EditorView | null } = { current: null };
 
 /* ── Lazy language loader ── */
 
@@ -174,6 +177,7 @@ export function EditorPane() {
       if (viewRef.current) {
         viewRef.current.destroy();
         viewRef.current = null;
+        editorViewRef.current = null;
       }
       activeFilePathRef.current = null;
       return;
@@ -212,6 +216,7 @@ export function EditorPane() {
         }),
         parent: containerRef.current,
       });
+      editorViewRef.current = viewRef.current;
     } else {
       // View already exists — swap document content AND reconfigure the listener
       // in a single transaction so the old listener doesn't fire on the content swap
@@ -283,6 +288,19 @@ export function EditorPane() {
       }
     }
   }, [activeFile?.content]);
+
+  const markdownModes = useEditorStore((s) => s.markdownModes);
+  const mdMode = activeFilePath ? markdownModes[activeFilePath] : undefined;
+  const isMdFile = activeFile ? isMarkdownFile(activeFile.name) : false;
+
+  // Focus the editor when transitioning from preview to off
+  const prevMdModeRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevMdModeRef.current === "preview" && mdMode === "off" && viewRef.current) {
+      viewRef.current.focus();
+    }
+    prevMdModeRef.current = mdMode;
+  }, [mdMode]);
 
   const isRepo = useGitStore((s) => s.isRepo);
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
@@ -399,9 +417,16 @@ export function EditorPane() {
     [activeFilePath, contextMenu, isRepo, handleAddSession]
   );
 
+  const editorHidden = isMdFile && mdMode === "preview";
+  const editorSplit = isMdFile && mdMode === "split";
+
   return (
     <>
-      <div className="editor-pane" ref={containerRef} onContextMenu={handleContextMenu}>
+      <div
+        className={`editor-pane${editorSplit ? " editor-pane--split" : ""}${editorHidden ? " editor-pane--hidden" : ""}`}
+        ref={containerRef}
+        onContextMenu={handleContextMenu}
+      >
         {!activeFile && (
           <div className="editor-pane__empty-overlay">
             <p className="editor-pane__placeholder">Open a file to start editing</p>

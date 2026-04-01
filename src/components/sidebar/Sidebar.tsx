@@ -54,6 +54,7 @@ export function Sidebar({ onDrag, onDoubleClick }: Props) {
       <div className="sidebar__drag-region" onMouseDown={onDrag} onDoubleClick={onDoubleClick} />
       <SidebarIconRail />
       <SidebarContent />
+      <span className="sidebar__version">v{__APP_VERSION__}</span>
     </aside>
   );
 }

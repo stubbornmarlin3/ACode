@@ -1,0 +1,119 @@
+.diff-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+.diff-viewer__empty {
+  color: var(--text-disabled);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+/* ── Side-by-side single table ── */
+
+.diff-sbs {
+  flex: 1;
+  overflow: auto;
+}
+
+.diff-sbs__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  table-layout: fixed;
+}
+
+/* Gutter columns */
+.diff-sbs__gutter {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-disabled);
+  user-select: none;
+  vertical-align: top;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* Code columns — each side takes remaining 50% */
+.diff-sbs__code {
+  width: 50%;
+  padding: 0 8px;
+  white-space: pre;
+  vertical-align: top;
+  overflow: hidden;
+}
+
+.diff-sbs__code pre {
+  margin: 0;
+  font: inherit;
+}
+
+/* ── Cell type styles ── */
+
+.diff-sbs__cell--context {
+  color: var(--text-disabled);
+}
+
+.diff-sbs__cell--remove {
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--accent-red);
+}
+
+.diff-sbs__cell--add {
+  background: rgba(63, 185, 80, 0.1);
+  color: var(--accent-green);
+}
+
+.diff-sbs__cell--empty {
+  background: rgba(128, 128, 128, 0.04);
+}
+
+/* Gutter tinting to match cell */
+.diff-sbs__gutter--remove {
+  background: rgba(248, 81, 73, 0.06);
+}
+
+.diff-sbs__gutter--add {
+  background: rgba(63, 185, 80, 0.06);
+}
+
+.diff-sbs__gutter--empty {
+  background: rgba(128, 128, 128, 0.04);
+}
+
+/* ── Fold separator ── */
+
+.diff-sbs__row--fold {
+  height: 28px;
+  background: var(--bg-glass-surface);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+
+.diff-sbs__row--fold:hover {
+  background: var(--bg-elevated);
+}
+
+.diff-sbs__fold-label {
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-disabled);
+  font-style: italic;
+  text-align: center;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.diff-sbs__row--fold:hover .diff-sbs__fold-label {
+  color: var(--text-secondary);
+}

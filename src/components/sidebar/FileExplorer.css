@@ -71,6 +71,12 @@
   text-overflow: ellipsis;
 }
 
+.file-tree-item__name--git-modified { color: var(--accent-yellow); }
+.file-tree-item__name--git-added { color: var(--accent-green); }
+.file-tree-item__name--git-deleted { color: var(--accent-red); opacity: 0.8; }
+.file-tree-item__name--git-renamed { color: var(--accent-blue); }
+.file-tree-item__name--git-untracked { color: var(--accent-green); opacity: 0.7; }
+
 .file-tree-item--editing {
   background: var(--bg-glass-surface);
 }

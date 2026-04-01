@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
-import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen, Bell } from "lucide-react";
+import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen, Bell, Eye, Columns2, Code } from "lucide-react";
 import { useLayoutStore } from "../../store/layoutStore";
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, isMarkdownFile, type MarkdownMode } from "../../store/editorStore";
 import { useNotificationStore } from "../../store/notificationStore";
 import { NotificationCenterPanel } from "../notifications/NotificationCenter";
 import "./WindowControls.css";
@@ -19,6 +19,15 @@ export function WindowControls() {
   const settingsOpen = useLayoutStore((s) => s.settingsOpen);
   const setSettingsOpen = useLayoutStore((s) => s.setSettingsOpen);
   const hasProject = useLayoutStore((s) => s.projects.activeProjectId) !== null;
+  const activeFilePath = useEditorStore((s) => s.activeFilePath);
+  const openFiles = useEditorStore((s) => s.openFiles);
+  const markdownModes = useEditorStore((s) => s.markdownModes);
+  const cycleMarkdownMode = useEditorStore((s) => s.cycleMarkdownMode);
+  const activeFile = openFiles.find((f) => f.path === activeFilePath);
+  const showMdToggle = hasProject && !settingsOpen && activeFile && isMarkdownFile(activeFile.name);
+  const mdMode: MarkdownMode = (activeFilePath && markdownModes[activeFilePath]) || "off";
+  const mdIcon = mdMode === "preview" ? <Eye size={14} /> : mdMode === "split" ? <Columns2 size={14} /> : <Code size={14} />;
+  const mdLabel = mdMode === "preview" ? "Preview" : mdMode === "split" ? "Side by Side" : "Editor";
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const centerOpen = useNotificationStore((s) => s.centerOpen);
   const setCenterOpen = useNotificationStore((s) => s.setCenterOpen);
@@ -38,6 +47,16 @@ export function WindowControls() {
 
   const actionButtons = (
     <>
+      {showMdToggle && (
+        <button
+          className="window-controls__btn window-controls__btn--action"
+          onClick={() => activeFilePath && cycleMarkdownMode(activeFilePath)}
+          aria-label={`Markdown: ${mdLabel}`}
+          title={`Markdown: ${mdLabel} (Ctrl+Shift+M)`}
+        >
+          {mdIcon}
+        </button>
+      )}
       {hasProject && !settingsOpen && (
         <button
           className="window-controls__btn window-controls__btn--action"

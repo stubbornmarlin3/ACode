@@ -1260,6 +1260,7 @@ pub fn run() {
             git::local::git_unstage,
             git::local::git_commit,
             git::local::git_diff,
+            git::local::git_show_file,
             git::local::git_log,
             git::local::git_branches,
             git::local::git_checkout,

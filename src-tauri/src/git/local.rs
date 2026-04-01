@@ -461,6 +461,32 @@ pub fn git_diff(
     Ok(output)
 }
 
+/// Get a file's content at HEAD (or return empty string if not in HEAD).
+#[tauri::command]
+pub fn git_show_file(repo_path: String, file_path: String) -> Result<String, String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => return Ok(String::new()),
+    };
+    let tree = head
+        .peel_to_tree()
+        .map_err(|e| format!("Failed to get tree: {}", e))?;
+
+    let entry = match tree.get_path(std::path::Path::new(&file_path)) {
+        Ok(e) => e,
+        Err(_) => return Ok(String::new()), // new file, not in HEAD
+    };
+
+    let blob = repo
+        .find_blob(entry.id())
+        .map_err(|e| format!("Failed to get blob: {}", e))?;
+
+    Ok(String::from_utf8_lossy(blob.content()).into_owned())
+}
+
 /// Get the commit log.
 #[tauri::command]
 pub fn git_log(repo_path: String, limit: Option<u32>) -> Result<Vec<GitLogEntry>, String> {

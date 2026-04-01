@@ -12,3 +12,12 @@
   height: 36px;
   flex-shrink: 0;
 }
+
+.sidebar__version {
+  flex-shrink: 0;
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  color: var(--text-tertiary, #555);
+  opacity: 0.7;
+  user-select: none;
+}

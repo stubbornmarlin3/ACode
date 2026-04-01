@@ -103,6 +103,8 @@ export interface ClaudeProjectState {
   isInPlanMode: boolean;
   /** Generation counter — incremented on each spawn so stale output from killed processes is ignored */
   generation: number;
+  /** Timestamp (ms) of last received stream output — used for stale detection */
+  lastActivityAt: number;
 }
 
 const EMPTY_PROJECT: ClaudeProjectState = {
@@ -123,6 +125,7 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   resolvedToolUseIds: [],
   isInPlanMode: false,
   generation: -1,
+  lastActivityAt: 0,
 };
 
 interface ClaudeStore {
@@ -209,6 +212,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
         streamingText: "",
         streamingThinking: "",
         activeToolUse: null,
+        lastActivityAt: 0,
       }),
     });
   },
@@ -509,6 +513,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
         lastSessionId,
         pendingInteractions: finalPendingInteractions,
         isInPlanMode,
+        lastActivityAt: Date.now(),
       }),
     });
   },
@@ -546,11 +551,21 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     // process (it doesn't stay alive like in interactive mode).
     await invoke("interrupt_claude", { key });
 
+    // Commit any partial streaming text and append an interrupted marker
+    const msgs = [...proj.messages];
+    const partial = proj.streamingText.trim();
+    if (partial) {
+      msgs.push({ role: "assistant", text: partial + "\n\n<!-- interrupted -->" });
+    } else {
+      msgs.push({ role: "assistant", text: "<!-- interrupted -->" });
+    }
+
     // Mark as not spawned — the process will exit from SIGINT.
     // Keep lastSessionId so the next spawn resumes the conversation.
     // The Rust side cleans up any stale lock file before respawning.
     set({
       projects: setProj(get().projects, key, {
+        messages: msgs,
         isStreaming: false,
         isSpawned: false,
         rawBuffer: "",

@@ -53,6 +53,8 @@ interface GitStore {
   remoteInfo: GitRemoteInfo | null;
   selectedFile: string | null;
   diff: string;
+  oldContent: string;
+  newContent: string;
   isLoading: boolean;
 
   initRepo: (path: string) => Promise<void>;
@@ -89,6 +91,8 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   remoteInfo: null,
   selectedFile: null,
   diff: "",
+  oldContent: "",
+  newContent: "",
   isLoading: false,
 
   initRepo: async (path) => {
@@ -174,8 +178,12 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   },
 
   fetchDiff: async (repoPath, filePath, staged) => {
-    const diff = await invoke<string>("git_diff", { repoPath, filePath, staged });
-    set({ diff });
+    const [diff, oldContent, newContent] = await Promise.all([
+      invoke<string>("git_diff", { repoPath, filePath, staged }),
+      invoke<string>("git_show_file", { repoPath, filePath }),
+      invoke<string>("read_file_contents", { path: repoPath.replace(/\\/g, "/") + "/" + filePath }),
+    ]);
+    set({ diff, oldContent, newContent });
   },
 
   fetchLog: async (repoPath) => {
@@ -231,6 +239,8 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
       remoteInfo: null,
       selectedFile: null,
       diff: "",
+      oldContent: "",
+      newContent: "",
       isLoading: false,
     }),
 }), { name: "gitStore", enabled: import.meta.env.DEV }));

@@ -1,15 +1,18 @@
 import { useCallback, useRef, useState } from "react";
-import { X, Copy, ExternalLink, Terminal as TerminalIcon, XCircle } from "lucide-react";
+import { X, Copy, ExternalLink, Terminal as TerminalIcon, XCircle, GitCompareArrows } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { clipboardWrite } from "../../utils/clipboard";
 import { getFileIcon } from "../../utils/fileIcons";
 import { useEditorTabBarState, useEditorActions, useEditorStore } from "../../store/editorStore";
+import { useGitStore } from "../../store/gitStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorTabBar.css";
 
 export function EditorTabBar() {
   const { openFiles, activeFilePath } = useEditorTabBarState();
   const { setActiveFile, closeFile, reorderOpenFiles } = useEditorActions();
+  const gitSelectedFile = useGitStore((s) => s.selectedFile);
+  const selectGitFile = useGitStore((s) => s.selectFile);
   const contextMenu = useContextMenu();
 
   /* ── Drag reorder state ── */
@@ -201,7 +204,9 @@ export function EditorTabBar() {
     [openFiles, closeFile, contextMenu]
   );
 
-  if (openFiles.length === 0) return null;
+  const diffFileName = gitSelectedFile?.split(/[\\/]/).pop() ?? "";
+
+  if (openFiles.length === 0 && !gitSelectedFile) return null;
 
   return (
     <>
@@ -224,7 +229,7 @@ export function EditorTabBar() {
               role="tab"
               aria-selected={file.path === activeFilePath}
               onClickCapture={handleTabClickCapture}
-              onClick={() => setActiveFile(file.path)}
+              onClick={() => { selectGitFile(null); setActiveFile(file.path); }}
               onContextMenu={(e) => handleTabContext(e, file.path)}
               onPointerDown={(e) => handleDragPointerDown(e, idx)}
               onPointerMove={handleDragPointerMove}
@@ -248,6 +253,28 @@ export function EditorTabBar() {
             </button>
           );
         })}
+        {gitSelectedFile && (
+          <button
+            className={`editor-tab-bar__tab editor-tab-bar__tab--active`}
+            role="tab"
+            aria-selected
+            title={`Diff: ${gitSelectedFile}`}
+          >
+            <span className="editor-tab-bar__tab-name">
+              <GitCompareArrows size={13} />
+              {diffFileName}
+            </span>
+            <span
+              className="editor-tab-bar__close"
+              onClick={(e) => {
+                e.stopPropagation();
+                selectGitFile(null);
+              }}
+            >
+              <X size={14} />
+            </span>
+          </button>
+        )}
       </div>
       {contextMenu.menu && (
         <ContextMenu x={contextMenu.menu.x} y={contextMenu.menu.y} items={contextMenu.menu.items} onClose={contextMenu.close} />

@@ -7,7 +7,8 @@ import { FolderOpen, GitFork, Search, Lock, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useLayoutStore } from "../../store/layoutStore";
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, isMarkdownFile } from "../../store/editorStore";
+import { useGitStore } from "../../store/gitStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useClaudeStore } from "../../store/claudeStore";
 import { useSettingsStore, matchesKeybind } from "../../store/settingsStore";
@@ -17,6 +18,8 @@ import { ProjectsRail } from "../projects/ProjectsRail";
 import { PillBar } from "../pillbar/PillBar";
 import { EditorTabBar } from "../editor/EditorTabBar";
 import { EditorPane } from "../editor/EditorPane";
+import { MarkdownPreview } from "../editor/MarkdownPreview";
+import { DiffViewer } from "../editor/DiffViewer";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
 import { TitleBarLogo } from "./TitleBarLogo";
@@ -259,6 +262,10 @@ export function RootLayout() {
   const projects = useLayoutStore((s) => s.projects.projects);
   const settingsOpen = useLayoutStore((s) => s.settingsOpen);
   const appearance = useSettingsStore((s) => s.appearance);
+  const gitSelectedFile = useGitStore((s) => s.selectedFile);
+  const activeFilePath = useEditorStore((s) => s.activeFilePath);
+  const markdownModes = useEditorStore((s) => s.markdownModes);
+  const mdMode = activeFilePath ? markdownModes[activeFilePath] : undefined;
   const hasProject = activeProjectId !== null;
   const hasProjectsInRail = projects.length > 0;
 
@@ -325,6 +332,19 @@ export function RootLayout() {
   // Global keybindings
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+M — cycle markdown preview mode
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        const st = useEditorStore.getState();
+        if (st.activeFilePath) {
+          const file = st.openFiles.find((f) => f.path === st.activeFilePath);
+          if (file && isMarkdownFile(file.name)) {
+            st.cycleMarkdownMode(st.activeFilePath);
+          }
+        }
+        return;
+      }
+
       const keybinds = useSettingsStore.getState().keybinds;
 
       for (const kb of keybinds) {
@@ -448,7 +468,15 @@ export function RootLayout() {
         </div>
         <div className="editor-card">
           <EditorTabBar />
-          <EditorPane />
+          <div className={`editor-card__body${!gitSelectedFile && mdMode === "split" ? " editor-card__body--split" : ""}`}>
+            {gitSelectedFile ? <DiffViewer /> : (
+              <>
+                <EditorPane />
+                <MarkdownPreview variant="full" />
+                <MarkdownPreview variant="panel" />
+              </>
+            )}
+          </div>
           <PillBar />
         </div>
       </div>

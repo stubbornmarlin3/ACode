@@ -19,6 +19,7 @@ import { platform } from "@tauri-apps/plugin-os";
 import { clipboardWrite } from "../../utils/clipboard";
 import { getFileIcon } from "../../utils/fileIcons";
 import { useEditorStore, FileEntry } from "../../store/editorStore";
+import { useGitStore } from "../../store/gitStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./FileExplorer.css";
 
@@ -155,6 +156,33 @@ function FileTreeItem({
   const refreshTree = useEditorStore((s) => s.refreshTree);
   const activeFilePath = useEditorStore((s) => s.activeFilePath);
   const expanded = useEditorStore((s) => s.expandedDirs.has(entry.path));
+  const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
+  const gitChanges = useGitStore((s) => s.status?.changes);
+
+  // Derive git status for this entry by matching absolute path to relative git path
+  const gitStatus = (() => {
+    if (!gitChanges || !workspaceRoot) return undefined;
+    const prefix = workspaceRoot.replace(/\\/g, "/") + "/";
+    const rel = entry.path.replace(/\\/g, "/").startsWith(prefix)
+      ? entry.path.replace(/\\/g, "/").slice(prefix.length)
+      : undefined;
+    if (!rel) return undefined;
+    if (entry.is_dir) {
+      // Only show git color on collapsed folders
+      if (expanded) return undefined;
+      const dirPrefix = rel + "/";
+      const childStatuses = gitChanges
+        .filter((c) => c.path.replace(/\\/g, "/").startsWith(dirPrefix))
+        .map((c) => c.status);
+      if (childStatuses.length === 0) return undefined;
+      for (const s of ["modified", "deleted", "added", "renamed", "untracked"]) {
+        if (childStatuses.includes(s)) return s;
+      }
+      return childStatuses[0];
+    }
+    const match = gitChanges.find((c) => c.path.replace(/\\/g, "/") === rel);
+    return match?.status;
+  })();
 
   const handleClick = useCallback(async () => {
     if (entry.is_dir) {
@@ -240,7 +268,7 @@ function FileTreeItem({
             <span className="file-tree-item__icon">{getFileIcon(entry.name, 14)}</span>
           </>
         )}
-        <span className="file-tree-item__name">{entry.name}</span>
+        <span className={`file-tree-item__name${gitStatus ? ` file-tree-item__name--git-${gitStatus}` : ""}`}>{entry.name}</span>
       </button>
       {entry.is_dir && expanded && entry.children && (
         <div className="file-tree-group">

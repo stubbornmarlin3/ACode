@@ -986,6 +986,44 @@
   background: rgba(239, 68, 68, 0.2);
 }
 
+/* ── Interrupted marker ── */
+.claude-chat__interrupted {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-tertiary, #666);
+  opacity: 0.6;
+  margin-top: 4px;
+}
+
+/* ── Stale hint ── */
+.claude-chat__stale-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  border-radius: 6px;
+  background: rgba(234, 179, 8, 0.1);
+  color: var(--text-secondary, #999);
+  font-size: 12px;
+}
+
+.claude-chat__stale-interrupt {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary, #ccc);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.claude-chat__stale-interrupt:hover {
+  background: rgba(234, 179, 8, 0.15);
+}
+
 /* ── Write tool code preview ── */
 .claude-chat__tool-use--write .claude-chat__code-block,
 .claude-chat__tool-use--edit .claude-chat__diff {

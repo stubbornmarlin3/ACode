@@ -5,6 +5,17 @@
   position: relative;
 }
 
+.editor-pane--split {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-pane--hidden {
+  visibility: hidden;
+  position: absolute;
+  pointer-events: none;
+}
+
 .editor-pane__empty-overlay {
   position: absolute;
   inset: 0;

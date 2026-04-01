@@ -125,6 +125,14 @@ export interface UnsavedConfirmation {
   onConfirm: () => void;
 }
 
+export type MarkdownMode = "preview" | "split" | "off";
+
+/** Check if a filename is a markdown file */
+export function isMarkdownFile(name: string): boolean {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "md" || ext === "mdx" || ext === "markdown";
+}
+
 interface EditorStore {
   workspaceRoot: string | null;
   /** Remembers the last non-null workspaceRoot so dialogs can use it after clearing */
@@ -136,6 +144,10 @@ interface EditorStore {
   projectStates: Record<string, ProjectEditorState>;
   /** When set, the unsaved changes dialog is shown */
   unsavedConfirmation: UnsavedConfirmation | null;
+  /** Per-file markdown preview mode */
+  markdownModes: Record<string, MarkdownMode>;
+  /** Tracks files that entered "off" mode by clicking the preview (auto-restore on save) */
+  markdownAutoRestore: Set<string>;
 
   setWorkspaceRoot: (path: string | null) => Promise<void>;
   openFile: (path: string, name: string) => Promise<void>;
@@ -151,6 +163,8 @@ interface EditorStore {
   reorderOpenFiles: (fromIndex: number, toIndex: number) => void;
   refreshTree: () => Promise<void>;
   setUnsavedConfirmation: (confirmation: UnsavedConfirmation | null) => void;
+  setMarkdownMode: (path: string, mode: MarkdownMode) => void;
+  cycleMarkdownMode: (path: string) => void;
 }
 
 /** Max number of project states to keep cached in memory. */
@@ -200,6 +214,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   expandedDirs: new Set<string>(),
   projectStates: {},
   unsavedConfirmation: null,
+  markdownModes: {},
+  markdownAutoRestore: new Set<string>(),
 
   setWorkspaceRoot: async (path) => {
     const { workspaceRoot, fileTree, openFiles, activeFilePath, expandedDirs, projectStates } = get();
@@ -427,10 +443,17 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
     }
     const raw = await invoke<string>("read_file_contents", { path });
     const content = raw.replace(/\r\n/g, "\n");
-    set((s) => ({
-      openFiles: [...s.openFiles, { path, name, content, baseContent: content, isDirty: false }],
-      activeFilePath: path,
-    }));
+    set((s) => {
+      const next: Partial<EditorStore> = {
+        openFiles: [...s.openFiles, { path, name, content, baseContent: content, isDirty: false }],
+        activeFilePath: path,
+      };
+      // Auto-set markdown files to preview mode on first open
+      if (isMarkdownFile(name) && !s.markdownModes[path]) {
+        next.markdownModes = { ...s.markdownModes, [path]: "preview" };
+      }
+      return next as any;
+    });
     persistCurrentSessions();
   },
 
@@ -459,7 +482,11 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
         nextActive =
           remaining[Math.min(idx, remaining.length - 1)]?.path ?? null;
       }
-      return { openFiles: remaining, activeFilePath: nextActive };
+      // Clean up markdown state
+      const { [path]: _m, ...restModes } = s.markdownModes;
+      const nextAutoRestore = new Set(s.markdownAutoRestore);
+      nextAutoRestore.delete(path);
+      return { openFiles: remaining, activeFilePath: nextActive, markdownModes: restModes, markdownAutoRestore: nextAutoRestore };
     });
     persistCurrentSessions();
   },
@@ -478,11 +505,21 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   },
 
   markFileSaved: (path) => {
-    set((s) => ({
-      openFiles: s.openFiles.map((f) =>
-        f.path === path ? { ...f, baseContent: f.content, isDirty: false } : f
-      ),
-    }));
+    set((s) => {
+      const update: any = {
+        openFiles: s.openFiles.map((f) =>
+          f.path === path ? { ...f, baseContent: f.content, isDirty: false } : f
+        ),
+      };
+      // Auto-restore preview mode if the user entered edit by clicking the preview
+      if (s.markdownAutoRestore.has(path)) {
+        update.markdownModes = { ...s.markdownModes, [path]: "preview" };
+        const nextAutoRestore = new Set(s.markdownAutoRestore);
+        nextAutoRestore.delete(path);
+        update.markdownAutoRestore = nextAutoRestore;
+      }
+      return update;
+    });
   },
 
   reloadFileFromDisk: async (path) => {
@@ -613,6 +650,23 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   setUnsavedConfirmation: (confirmation) => {
     set({ unsavedConfirmation: confirmation });
   },
+
+  setMarkdownMode: (path, mode) => {
+    set((s) => ({
+      markdownModes: { ...s.markdownModes, [path]: mode },
+    }));
+  },
+
+  cycleMarkdownMode: (path) => {
+    set((s) => {
+      const current = s.markdownModes[path] ?? "off";
+      const next: MarkdownMode = current === "preview" ? "split" : current === "split" ? "off" : "preview";
+      // Clear auto-restore flag when cycling via button (explicit user choice)
+      const nextAutoRestore = new Set(s.markdownAutoRestore);
+      nextAutoRestore.delete(path);
+      return { markdownModes: { ...s.markdownModes, [path]: next }, markdownAutoRestore: nextAutoRestore };
+    });
+  },
 }), { name: "editorStore", enabled: import.meta.env.DEV }));
 
 /* ── Custom selector hooks ── */
@@ -634,6 +688,8 @@ export function useEditorActions() {
       refreshTree: s.refreshTree,
       setWorkspaceRoot: s.setWorkspaceRoot,
       setUnsavedConfirmation: s.setUnsavedConfirmation,
+      setMarkdownMode: s.setMarkdownMode,
+      cycleMarkdownMode: s.cycleMarkdownMode,
     }))
   );
 }

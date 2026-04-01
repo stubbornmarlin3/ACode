@@ -2,12 +2,14 @@ import { useCallback } from "react";
 import { Plus, Minus, Undo2, File, Copy, ExternalLink, Terminal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { clipboardWrite } from "../../../utils/clipboard";
+import { getFileIcon } from "../../../utils/fileIcons";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore, type GitFileChange } from "../../../store/gitStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../../contextmenu/ContextMenu";
 
 interface Props {
   change: GitFileChange;
+  depth?: number;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -18,7 +20,7 @@ const STATUS_LABELS: Record<string, string> = {
   untracked: "U",
 };
 
-export function GitFileItem({ change }: Props) {
+export function GitFileItem({ change, depth = 0 }: Props) {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const openFile = useEditorStore((s) => s.openFile);
   const stageFiles = useGitStore((s) => s.stageFiles);
@@ -118,11 +120,12 @@ export function GitFileItem({ change }: Props) {
 
   return (
     <>
-      <div className="git-file-item" onClick={handleClick} onContextMenu={handleContextMenu} title={change.path}>
+      <div className="git-file-item" onClick={handleClick} onContextMenu={handleContextMenu} title={change.path} style={{ paddingLeft: `${depth * 12 + 4}px` }}>
+        <span className="git-file-item__icon">{getFileIcon(fileName, 14)}</span>
+        <span className="git-file-item__path">{fileName}</span>
         <span className={`git-file-item__status ${statusClass}`}>
           {STATUS_LABELS[change.status] ?? "?"}
         </span>
-        <span className="git-file-item__path">{fileName}</span>
         <span className="git-file-item__actions">
           {change.staged ? (
             <button

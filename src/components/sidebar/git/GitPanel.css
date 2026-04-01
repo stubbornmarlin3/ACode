@@ -473,6 +473,45 @@
   letter-spacing: 0.5px;
 }
 
+/* ── Folder item ─────────────────────────────────── */
+
+.git-folder-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.git-folder-item:hover {
+  background: var(--bg-elevated);
+}
+
+.git-folder-item__chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--text-disabled);
+}
+
+.git-folder-item__icon {
+  flex-shrink: 0;
+  color: var(--text-disabled);
+}
+
+.git-folder-item__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* ── File item ────────────────────────────────────── */
 
 .git-file-item {
@@ -488,6 +527,13 @@
 
 .git-file-item:hover {
   background: var(--bg-elevated);
+}
+
+.git-file-item__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-disabled);
 }
 
 .git-file-item__status {
@@ -513,13 +559,9 @@
 }
 
 .git-file-item__actions {
-  display: none;
+  display: flex;
   gap: 2px;
   flex-shrink: 0;
-}
-
-.git-file-item:hover .git-file-item__actions {
-  display: flex;
 }
 
 .git-file-item__action {
