@@ -29,6 +29,11 @@
   overflow: hidden;
 }
 
+/* Allow SVG spinner to be visible outside the unit */
+.floating-pill-unit--spinning {
+  overflow: visible;
+}
+
 /* Inside unified unit, pill and panel lose their own borders/backgrounds */
 .floating-pill-unit--unified .pill-item--expanded {
   background: none;
@@ -36,8 +41,7 @@
   backdrop-filter: none;
   border-radius: 0;
   transition: none;
-  height: 38px;
-  min-height: 0;
+  min-height: 38px;
 }
 
 .floating-pill-unit--unified .pill-item__label-zone {
@@ -510,7 +514,6 @@
 .pill-item--collapsed.pill-item--spin-orange {
   position: relative;
   z-index: 0;
-  border-color: transparent;
 }
 
 .pill-item--collapsed.pill-item--spin-blue::before,
@@ -551,7 +554,6 @@
 .pill-item--expanded.pill-item--spin-blue,
 .pill-item--expanded.pill-item--spin-orange {
   position: relative;
-  border-color: transparent;
 }
 
 .pill-item__border-spinner {

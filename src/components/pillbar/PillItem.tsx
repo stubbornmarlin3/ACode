@@ -12,9 +12,10 @@ import { useClaudeStore, useClaudeStateForKey } from "../../store/claudeStore";
 import { useMcpStore } from "../../store/mcpStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 /** SVG border spinner for expanded pills — uniform speed along the perimeter */
-function BorderSpinner({ color }: { color: "blue" | "orange" }) {
+export function BorderSpinner({ color }: { color: "blue" | "orange" }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 0, h: 0 });
 
@@ -79,6 +80,7 @@ interface Props {
   sessionId: string;
   sessionType: "terminal" | "claude" | "github";
   isExpanded: boolean;
+  isPanelOpen?: boolean;
   onCollapsedClick: () => void;
   onLabelClick: () => void;
   onCollapse: () => void;
@@ -97,7 +99,7 @@ const LABELS: Record<string, { text: string; placeholder: string }> = {
   github: { text: "GitHub", placeholder: "Search PRs and issues..." },
 };
 
-export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick, onLabelClick, onCollapse, onRemove }: Props) {
+export function PillItem({ sessionId, sessionType, isExpanded, isPanelOpen, onCollapsedClick, onLabelClick, onCollapse, onRemove }: Props) {
   const { text, placeholder } = LABELS[sessionType];
   const icon = ICONS[sessionType];
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -538,7 +540,7 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
 
   return (
     <div className={`pill-item pill-item--expanded${glowClass}`} onAuxClick={handleAuxClick}>
-      {isExpanded && isSpinning && <BorderSpinner color={spinColor} />}
+      {isExpanded && isSpinning && !isPanelOpen && <BorderSpinner color={spinColor} />}
       {/* Left zone — left click toggles panel, right click collapses */}
       <button
         className="pill-item__label-zone"
@@ -584,7 +586,25 @@ export function PillItem({ sessionId, sessionType, isExpanded, onCollapsedClick,
                 lastOutputLine
               ) : isClaude ? (
                 <span className="pill-item__output-md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a({ href, children, ...props }) {
+                        return (
+                          <a
+                            href={href}
+                            {...props}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              if (href) openUrl(href);
+                            }}
+                          >
+                            {children}
+                          </a>
+                        );
+                      },
+                    }}
+                  >
                     {lastOutputLine}
                   </ReactMarkdown>
                 </span>

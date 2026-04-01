@@ -3,7 +3,7 @@ import { X, Copy, ExternalLink, Terminal as TerminalIcon, XCircle } from "lucide
 import { invoke } from "@tauri-apps/api/core";
 import { clipboardWrite } from "../../utils/clipboard";
 import { getFileIcon } from "../../utils/fileIcons";
-import { useEditorTabBarState, useEditorActions } from "../../store/editorStore";
+import { useEditorTabBarState, useEditorActions, useEditorStore } from "../../store/editorStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
 import "./EditorTabBar.css";
 
@@ -140,16 +140,37 @@ export function EditorTabBar() {
           label: "Close Others",
           icon: <XCircle size={12} />,
           action: () => {
-            openFiles.forEach((f) => {
-              if (f.path !== filePath) closeFile(f.path);
-            });
+            const others = openFiles.filter((f) => f.path !== filePath);
+            const dirtyOthers = others.filter((f) => f.isDirty);
+            if (dirtyOthers.length > 0) {
+              useEditorStore.getState().setUnsavedConfirmation({
+                dirtyPaths: dirtyOthers.map((f) => f.path),
+                onConfirm: () => {
+                  const st = useEditorStore.getState();
+                  others.forEach((f) => st.closeFileForce(f.path));
+                },
+              });
+            } else {
+              others.forEach((f) => closeFile(f.path));
+            }
           },
         },
         {
           label: "Close All",
           icon: <XCircle size={12} />,
           action: () => {
-            openFiles.forEach((f) => closeFile(f.path));
+            const dirtyFiles = openFiles.filter((f) => f.isDirty);
+            if (dirtyFiles.length > 0) {
+              useEditorStore.getState().setUnsavedConfirmation({
+                dirtyPaths: dirtyFiles.map((f) => f.path),
+                onConfirm: () => {
+                  const st = useEditorStore.getState();
+                  openFiles.forEach((f) => st.closeFileForce(f.path));
+                },
+              });
+            } else {
+              openFiles.forEach((f) => closeFile(f.path));
+            }
           },
         },
         "separator",

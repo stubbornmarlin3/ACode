@@ -1,8 +1,28 @@
 {
-  "sessions": [],
-  "activeIndex": 0,
-  "openFiles": [
-    "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
+  "sessions": [
+    {
+      "type": "claude",
+      "panelHeight": 821,
+      "expanded": true,
+      "panelOpen": true,
+      "floating": {
+        "x": 1361,
+        "y": 942,
+        "width": 1219
+      },
+      "preDockWidth": 934
+    },
+    {
+      "type": "terminal",
+      "expanded": true,
+      "floating": {},
+      "preDockWidth": 600
+    }
   ],
-  "activeFilePath": "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
+  "activeIndex": 0,
+  "dockedOrder": [
+    1
+  ],
+  "openFiles": [],
+  "activeFilePath": null
 }

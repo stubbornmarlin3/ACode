@@ -567,7 +567,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     const msg = JSON.stringify({
       type: "tool_result",
       tool_use_id: toolUseId,
-      result,
+      content: result,
     });
     await invoke("write_claude", { key, data: msg });
 

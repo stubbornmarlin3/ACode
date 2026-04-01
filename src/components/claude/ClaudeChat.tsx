@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { clipboardWrite } from "../../utils/clipboard";
 import {
   useClaudeStore,
@@ -118,9 +119,12 @@ function CopyButton({ text }: { text: string }) {
 
 // ── Extract plain text from React children ──────────────────────────
 
-function childrenToText(children: React.ReactNode): string {
-  if (typeof children === "string") return children;
-  if (Array.isArray(children)) return children.map(childrenToText).join("");
+function childrenToText(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(childrenToText).join("");
+  if (typeof node === "object" && "props" in node) return childrenToText((node as unknown as { props: { children?: React.ReactNode } }).props.children);
   return "";
 }
 
@@ -131,6 +135,20 @@ function Markdown({ children }: { children: string }) {
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
+        a({ href, children, ...props }) {
+          return (
+            <a
+              href={href}
+              {...props}
+              onClick={(e) => {
+                e.preventDefault();
+                if (href) openUrl(href);
+              }}
+            >
+              {children}
+            </a>
+          );
+        },
         code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");
           const isInline = !match && !className;

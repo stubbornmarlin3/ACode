@@ -25,6 +25,7 @@ import { BannerToastContainer } from "../notifications/BannerToast";
 import { useNotificationStore } from "../../store/notificationStore";
 import { CreateBranchDialog } from "../sidebar/git/CreateBranchDialog";
 import { PublishRepoDialog } from "../sidebar/git/PublishRepoDialog";
+import { UnsavedChangesDialog } from "../editor/UnsavedChangesDialog";
 
 const isMacos = platform() === "macos";
 
@@ -263,14 +264,21 @@ export function RootLayout() {
 
   const sidebarWidthRef = useRef(appearance.sidebarWidth);
   sidebarWidthRef.current = appearance.sidebarWidth;
+  const sidebarRafRef = useRef(0);
 
   const handleSidebarResize = useCallback((delta: number) => {
     const next = Math.max(140, Math.min(600, sidebarWidthRef.current + delta));
     sidebarWidthRef.current = next;
-    document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
+    const root = document.querySelector(".root-layout");
+    root?.classList.add("root-layout--resizing");
+    cancelAnimationFrame(sidebarRafRef.current);
+    sidebarRafRef.current = requestAnimationFrame(() => {
+      document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
+    });
   }, []);
 
   const handleSidebarResizeEnd = useCallback(() => {
+    document.querySelector(".root-layout")?.classList.remove("root-layout--resizing");
     useSettingsStore.getState().setAppearanceSetting("sidebarWidth", sidebarWidthRef.current);
   }, []);
 
@@ -449,6 +457,7 @@ export function RootLayout() {
       <CloneExplorerOverlay />
       <CreateBranchOverlay />
       <PublishRepoOverlay />
+      <UnsavedChangesDialog />
     </div>
   );
 }

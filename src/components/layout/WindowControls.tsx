@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen, Bell } from "lucide-react";
 import { useLayoutStore } from "../../store/layoutStore";
+import { useEditorStore } from "../../store/editorStore";
 import { useNotificationStore } from "../../store/notificationStore";
 import { NotificationCenterPanel } from "../notifications/NotificationCenter";
 import "./WindowControls.css";
@@ -115,7 +116,18 @@ export function WindowControls() {
         </button>
         <button
           className="window-controls__btn window-controls__btn--close"
-          onClick={() => win.close()}
+          onClick={() => {
+            const state = useEditorStore.getState();
+            const dirtyFiles = state.openFiles.filter((f) => f.isDirty);
+            if (dirtyFiles.length > 0) {
+              state.setUnsavedConfirmation({
+                dirtyPaths: dirtyFiles.map((f) => f.path),
+                onConfirm: () => win.close(),
+              });
+            } else {
+              win.close();
+            }
+          }}
           aria-label="Close"
         >
           <X size={14} />

@@ -9,6 +9,10 @@
   transition: grid-template-columns 200ms ease;
 }
 
+.root-layout--resizing {
+  transition: none;
+}
+
 .root-layout--sidebar-closed {
   grid-template-columns: 0px 0px 1fr var(--projects-rail-width);
 }

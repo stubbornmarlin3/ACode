@@ -117,6 +117,14 @@ interface ProjectEditorState {
   terminalShowingOutput: boolean;
 }
 
+/** Pending unsaved-changes confirmation state */
+export interface UnsavedConfirmation {
+  /** File paths with unsaved changes that need confirmation */
+  dirtyPaths: string[];
+  /** Callback to execute after user confirms (save or discard) */
+  onConfirm: () => void;
+}
+
 interface EditorStore {
   workspaceRoot: string | null;
   /** Remembers the last non-null workspaceRoot so dialogs can use it after clearing */
@@ -126,10 +134,14 @@ interface EditorStore {
   activeFilePath: string | null;
   expandedDirs: Set<string>;
   projectStates: Record<string, ProjectEditorState>;
+  /** When set, the unsaved changes dialog is shown */
+  unsavedConfirmation: UnsavedConfirmation | null;
 
   setWorkspaceRoot: (path: string | null) => Promise<void>;
   openFile: (path: string, name: string) => Promise<void>;
   closeFile: (path: string) => void;
+  /** Force-close a file without checking for unsaved changes */
+  closeFileForce: (path: string) => void;
   setActiveFile: (path: string) => void;
   updateFileContent: (path: string, content: string) => void;
   markFileSaved: (path: string) => void;
@@ -138,6 +150,7 @@ interface EditorStore {
   toggleDir: (path: string) => void;
   reorderOpenFiles: (fromIndex: number, toIndex: number) => void;
   refreshTree: () => Promise<void>;
+  setUnsavedConfirmation: (confirmation: UnsavedConfirmation | null) => void;
 }
 
 /** Max number of project states to keep cached in memory. */
@@ -186,6 +199,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   activeFilePath: null,
   expandedDirs: new Set<string>(),
   projectStates: {},
+  unsavedConfirmation: null,
 
   setWorkspaceRoot: async (path) => {
     const { workspaceRoot, fileTree, openFiles, activeFilePath, expandedDirs, projectStates } = get();
@@ -411,7 +425,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       persistCurrentSessions();
       return;
     }
-    const content = await invoke<string>("read_file_contents", { path });
+    const raw = await invoke<string>("read_file_contents", { path });
+    const content = raw.replace(/\r\n/g, "\n");
     set((s) => ({
       openFiles: [...s.openFiles, { path, name, content, baseContent: content, isDirty: false }],
       activeFilePath: path,
@@ -420,6 +435,22 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   },
 
   closeFile: (path) => {
+    const file = get().openFiles.find((f) => f.path === path);
+    if (file?.isDirty) {
+      set({
+        unsavedConfirmation: {
+          dirtyPaths: [path],
+          onConfirm: () => {
+            get().closeFileForce(path);
+          },
+        },
+      });
+      return;
+    }
+    get().closeFileForce(path);
+  },
+
+  closeFileForce: (path) => {
     set((s) => {
       const remaining = s.openFiles.filter((f) => f.path !== path);
       let nextActive = s.activeFilePath;
@@ -441,7 +472,7 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   updateFileContent: (path, content) => {
     set((s) => ({
       openFiles: s.openFiles.map((f) =>
-        f.path === path ? { ...f, content, isDirty: true } : f
+        f.path === path ? { ...f, content, isDirty: content !== f.baseContent } : f
       ),
     }));
   },
@@ -459,7 +490,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
     const file = openFiles.find((f) => f.path === path);
     if (!file) return;
     try {
-      const diskContent = await invoke<string>("read_file_contents", { path });
+      const rawDisk = await invoke<string>("read_file_contents", { path });
+      const diskContent = rawDisk.replace(/\r\n?/g, "\n");
       if (diskContent === file.baseContent) return; // disk hasn't actually changed
 
       if (!file.isDirty) {
@@ -534,12 +566,29 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   },
 
   refreshTree: async () => {
-    const { workspaceRoot, openFiles, activeFilePath } = get();
+    const { workspaceRoot, openFiles, activeFilePath, expandedDirs } = get();
     if (!workspaceRoot) return;
-    const tree = await invoke<FileEntry[]>("read_dir_tree", {
+    let tree = await invoke<FileEntry[]>("read_dir_tree", {
       path: workspaceRoot,
       maxDepth: 2,
     });
+
+    // Re-expand directories that were previously expanded but lost children
+    // due to the shallow maxDepth. Sort by depth (shallowest first) so parent
+    // nodes exist in the tree before we try to expand their children.
+    const sortedDirs = [...expandedDirs].sort(
+      (a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length
+    );
+    const stillValid = new Set(expandedDirs);
+    for (const dirPath of sortedDirs) {
+      try {
+        const children = await invoke<FileEntry[]>("expand_dir", { path: dirPath });
+        tree = updateTreeNode(tree, dirPath, children);
+      } catch {
+        // Directory no longer exists — will be pruned from expandedDirs below
+        stillValid.delete(dirPath);
+      }
+    }
 
     // Close any open files that no longer exist on disk
     const treePaths = new Set<string>();
@@ -558,7 +607,11 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       nextActive = remaining[Math.min(idx, remaining.length - 1)]?.path ?? null;
     }
 
-    set({ fileTree: tree, openFiles: remaining, activeFilePath: nextActive });
+    set({ fileTree: tree, openFiles: remaining, activeFilePath: nextActive, expandedDirs: stillValid });
+  },
+
+  setUnsavedConfirmation: (confirmation) => {
+    set({ unsavedConfirmation: confirmation });
   },
 }), { name: "editorStore", enabled: import.meta.env.DEV }));
 
@@ -570,6 +623,7 @@ export function useEditorActions() {
     useShallow((s) => ({
       openFile: s.openFile,
       closeFile: s.closeFile,
+      closeFileForce: s.closeFileForce,
       setActiveFile: s.setActiveFile,
       updateFileContent: s.updateFileContent,
       markFileSaved: s.markFileSaved,
@@ -579,6 +633,7 @@ export function useEditorActions() {
       reorderOpenFiles: s.reorderOpenFiles,
       refreshTree: s.refreshTree,
       setWorkspaceRoot: s.setWorkspaceRoot,
+      setUnsavedConfirmation: s.setUnsavedConfirmation,
     }))
   );
 }

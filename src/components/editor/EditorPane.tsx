@@ -148,6 +148,8 @@ export function EditorPane() {
   const activeFilePathRef = useRef<string | null>(null);
   // Debounced content update (50ms delay — fast enough for responsiveness, avoids per-keystroke store updates)
   const debouncedUpdate = useRef(createDebouncedUpdater(50));
+  // Flag to suppress the updateListener during external content syncs
+  const isSyncingExternalRef = useRef(false);
 
   // Build the font/theme extension — memoized on the settings that affect it
   const buildFontTheme = useCallback(
@@ -199,7 +201,7 @@ export function EditorPane() {
             wrapCompartment.current.of(settings.lineWrapping ? EditorView.lineWrapping : []),
             listenerCompartment.current.of(
               EditorView.updateListener.of((update) => {
-                if (update.docChanged) {
+                if (update.docChanged && !isSyncingExternalRef.current) {
                   const newContent = update.state.doc.toString();
                   editorContentRef.current = newContent;
                   debouncedUpdate.current(() => updateFileContent(filePath, newContent));
@@ -211,14 +213,11 @@ export function EditorPane() {
         parent: containerRef.current,
       });
     } else {
-      // View already exists — swap document content
+      // View already exists — swap document content AND reconfigure the listener
+      // in a single transaction so the old listener doesn't fire on the content swap
       const view = viewRef.current;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: activeFile.content },
-      });
-
-      // Reconfigure the update listener for the new file path
-      view.dispatch({
         effects: listenerCompartment.current.reconfigure(
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
@@ -274,8 +273,13 @@ export function EditorPane() {
       const currentDoc = view.state.doc.toString();
       if (activeFile.content !== currentDoc) {
         const changes = computeMinimalChanges(currentDoc, activeFile.content);
+        // Suppress the updateListener so it doesn't feed content back to the store
+        isSyncingExternalRef.current = true;
         view.dispatch({ changes });
         editorContentRef.current = activeFile.content;
+        isSyncingExternalRef.current = false;
+        // Force CodeMirror to re-measure layout after external content change
+        view.requestMeasure();
       }
     }
   }, [activeFile?.content]);

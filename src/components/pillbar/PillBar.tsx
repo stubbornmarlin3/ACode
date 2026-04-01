@@ -7,14 +7,14 @@ import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { useLayoutStore, maxPanelsForWidth, type PillSession, type PillSessionType, type PillFloatingState } from "../../store/layoutStore";
 import { useGitStore } from "../../store/gitStore";
 import { useEditorStore } from "../../store/editorStore";
-import { useTerminalStore } from "../../store/terminalStore";
-import { useClaudeStore } from "../../store/claudeStore";
+import { useTerminalStore, useTerminalStateForKey } from "../../store/terminalStore";
+import { useClaudeStore, useClaudeStateForKey } from "../../store/claudeStore";
 import { useActivityStore } from "../../store/activityStore";
 import { useGitHubStore } from "../../store/githubStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useNotificationStore } from "../../store/notificationStore";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
-import { PillItem } from "./PillItem";
+import { PillItem, BorderSpinner } from "./PillItem";
 import { PillPanel } from "./PillPanel";
 import { persistCurrentSessions } from "../../store/editorStore";
 
@@ -393,6 +393,18 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
   const panelHeight = useLayoutStore((s) => s.pillBar.panelHeights[session.id]);
   const defaultPanelHeight = useSettingsStore((s) => s.appearance.defaultPanelHeight);
   const height = panelHeight ?? defaultPanelHeight;
+
+  const isClaudeStreaming = useClaudeStateForKey(
+    session.type === "claude" ? session.id : null,
+    (s) => s.isStreaming
+  );
+  const termCommandPhase = useTerminalStateForKey(
+    session.type === "terminal" ? session.id : null,
+    (s) => s.commandPhase
+  );
+  const isTermRunning = session.type === "terminal" && (termCommandPhase === "submitted" || termCommandPhase === "capturing");
+  const unitSpinning = isPanelOpen && (isClaudeStreaming || isTermRunning);
+  const unitSpinColor: "blue" | "orange" = session.type === "terminal" ? "blue" : "orange";
 
   const unitRef = useRef<HTMLDivElement>(null);
   const didDragRef = useRef(false);
@@ -832,7 +844,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
   return (
     <div
       ref={unitRef}
-      className={`floating-pill-unit${isPanelOpen ? " floating-pill-unit--unified" : ""}${flipped ? " floating-pill-unit--flipped" : ""}${isDocked ? " floating-pill-unit--docked" : ""}`}
+      className={`floating-pill-unit${isPanelOpen ? " floating-pill-unit--unified" : ""}${flipped ? " floating-pill-unit--flipped" : ""}${isDocked ? " floating-pill-unit--docked" : ""}${unitSpinning ? " floating-pill-unit--spinning" : ""}`}
       data-session-id={session.id}
       style={{
         left: floating.x,
@@ -844,6 +856,9 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
       onClickCapture={handleClickCapture}
       onContextMenu={(e) => onContext(e, session)}
     >
+      {/* Spinning border around entire unit when streaming */}
+      {unitSpinning && <BorderSpinner color={unitSpinColor} />}
+
       {/* Panel — CSS column-reverse handles flipping */}
       {isPanelOpen && (
         <PillPanel sessionId={session.id} mode={session.type} effectiveHeight={panelH} />
@@ -855,6 +870,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
           sessionId={session.id}
           sessionType={session.type}
           isExpanded={true}
+          isPanelOpen={isPanelOpen}
           onCollapsedClick={handlePillClick}
           onLabelClick={handleLabelClick}
           onCollapse={() => onCollapse(session.id, unitRef.current)}

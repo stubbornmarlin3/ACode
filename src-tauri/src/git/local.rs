@@ -5,6 +5,22 @@ use git2::{Cred, CredentialType, DiffOptions, RemoteCallbacks, Repository, Statu
 
 use super::types::*;
 
+/// Ensure `.acode/` is listed in the project's `.gitignore`.
+/// Called on init and status so existing repos also get the entry.
+fn ensure_acode_gitignored(repo_root: &str) {
+    let gitignore = Path::new(repo_root).join(".gitignore");
+    let content = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if content.lines().any(|l| l.trim() == ".acode/" || l.trim() == ".acode") {
+        return;
+    }
+    let mut new_content = content;
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str(".acode/\n");
+    let _ = std::fs::write(&gitignore, new_content);
+}
+
 /// Build remote callbacks with credential handling.
 /// - `use_token`: if true, also try the stored GitHub token for HTTPS auth.
 ///   Set to false for background operations (e.g. auto-fetch) to avoid prompts.
@@ -73,6 +89,8 @@ pub fn git_init(path: String) -> Result<(), String> {
     let repo = Repository::init(&path).map_err(|e| format!("Failed to init repo: {}", e))?;
     repo.set_head("refs/heads/main")
         .map_err(|e| format!("Failed to set default branch: {}", e))?;
+    // Ensure .acode/ is in .gitignore
+    ensure_acode_gitignored(&path);
     Ok(())
 }
 
@@ -140,6 +158,11 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
         }
     };
 
+    // Ensure .acode/ is gitignored for existing repos
+    if let Some(workdir) = repo.workdir() {
+        ensure_acode_gitignored(&workdir.to_string_lossy());
+    }
+
     // Get current branch name (handles unborn branches like fresh repos)
     let branch = match repo.head() {
         Ok(head) => head
@@ -180,6 +203,11 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
             .path()
             .unwrap_or("")
             .to_string();
+
+        // Never show .acode/ files in git status
+        if file_path.starts_with(".acode/") || file_path == ".acode" {
+            continue;
+        }
 
         // Index (staged) changes
         if status.intersects(
@@ -288,6 +316,12 @@ pub fn git_stage(repo_path: String, file_paths: Vec<String>) -> Result<(), Strin
     let mut index = repo.index().map_err(|e| format!("Failed to get index: {}", e))?;
 
     for file_path in &file_paths {
+        // Never stage .acode/ files
+        if file_path.starts_with(".acode/") || file_path == ".acode"
+            || file_path.contains("/.acode/") || file_path.contains("\\.acode\\")
+        {
+            continue;
+        }
         let path = Path::new(file_path);
         // Try to add; if file was deleted, remove from index
         if path.is_absolute() {
