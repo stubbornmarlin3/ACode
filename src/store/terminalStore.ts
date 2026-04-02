@@ -153,10 +153,11 @@ export function useActiveTerminalState<T>(selector: (s: TerminalProjectState) =>
   });
 }
 
-/** Selector hook to read a specific session's terminal state by key (falls back to activeKey). */
+/** Selector hook to read a specific session's terminal state by key.
+ *  When key is null, returns the default empty state (not the active session). */
 export function useTerminalStateForKey<T>(key: string | null, selector: (s: TerminalProjectState) => T): T {
   return useTerminalStore((s) => {
-    const proj = getProj(s.projects, key ?? s.activeKey);
+    const proj = getProj(s.projects, key);
     return selector(proj);
   });
 }

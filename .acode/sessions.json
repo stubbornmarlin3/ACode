@@ -6,8 +6,8 @@
       "expanded": true,
       "panelOpen": true,
       "floating": {
-        "x": 1696,
-        "y": 832,
+        "x": 1978,
+        "y": 1125,
         "width": 892
       }
     },
@@ -16,24 +16,13 @@
       "expanded": true,
       "panelOpen": true,
       "floating": {
-        "x": 810,
-        "y": 627,
-        "width": 600
-      }
-    },
-    {
-      "type": "claude",
-      "expanded": true,
-      "floating": {
-        "x": 856,
-        "y": 1208,
+        "x": 1305,
+        "y": 413,
         "width": 600
       }
     }
   ],
-  "activeIndex": 2,
-  "openFiles": [
-    "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
-  ],
-  "activeFilePath": "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
+  "activeIndex": 0,
+  "openFiles": [],
+  "activeFilePath": null
 }

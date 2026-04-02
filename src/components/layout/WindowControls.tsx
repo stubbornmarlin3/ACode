@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
-import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen, Bell, Eye, Columns2, Code } from "lucide-react";
+import { Minus, Square, X, Copy, Settings, PanelLeftClose, PanelLeftOpen, Bell, Eye, Columns2, Code, Binary } from "lucide-react";
 import { useLayoutStore } from "../../store/layoutStore";
 import { useEditorStore, isMarkdownFile, type MarkdownMode } from "../../store/editorStore";
 import { useNotificationStore } from "../../store/notificationStore";
@@ -23,11 +23,15 @@ export function WindowControls() {
   const openFiles = useEditorStore((s) => s.openFiles);
   const markdownModes = useEditorStore((s) => s.markdownModes);
   const cycleMarkdownMode = useEditorStore((s) => s.cycleMarkdownMode);
+  const hexModes = useEditorStore((s) => s.hexModes);
+  const toggleHexMode = useEditorStore((s) => s.toggleHexMode);
   const activeFile = openFiles.find((f) => f.path === activeFilePath);
   const showMdToggle = hasProject && !settingsOpen && activeFile && isMarkdownFile(activeFile.name);
   const mdMode: MarkdownMode = (activeFilePath && markdownModes[activeFilePath]) || "off";
   const mdIcon = mdMode === "preview" ? <Eye size={14} /> : mdMode === "split" ? <Columns2 size={14} /> : <Code size={14} />;
   const mdLabel = mdMode === "preview" ? "Preview" : mdMode === "split" ? "Side by Side" : "Editor";
+  const showHexToggle = hasProject && !settingsOpen && activeFile;
+  const isHexMode = activeFilePath ? !!hexModes[activeFilePath] : false;
   const unreadCount = useNotificationStore((s) => s.unreadCount);
   const centerOpen = useNotificationStore((s) => s.centerOpen);
   const setCenterOpen = useNotificationStore((s) => s.setCenterOpen);
@@ -57,16 +61,24 @@ export function WindowControls() {
           {mdIcon}
         </button>
       )}
-      {hasProject && !settingsOpen && (
+      {showHexToggle && (
         <button
-          className="window-controls__btn window-controls__btn--action"
-          onClick={toggleSidebar}
-          aria-label={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
-          title={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
+          className={`window-controls__btn window-controls__btn--action${isHexMode ? " window-controls__btn--active" : ""}`}
+          onClick={() => activeFilePath && toggleHexMode(activeFilePath)}
+          aria-label={isHexMode ? "Switch to text editor" : "Switch to hex editor"}
+          title={isHexMode ? "Switch to text editor" : "Switch to hex editor"}
         >
-          {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+          <Binary size={14} />
         </button>
       )}
+      <button
+        className="window-controls__btn window-controls__btn--action"
+        onClick={() => setSettingsOpen(!settingsOpen)}
+        aria-label="Settings"
+        title="Settings"
+      >
+        <Settings size={14} />
+      </button>
       <button
         ref={bellRef}
         className="window-controls__btn window-controls__btn--action window-controls__bell"
@@ -81,14 +93,16 @@ export function WindowControls() {
           </span>
         )}
       </button>
-      <button
-        className="window-controls__btn window-controls__btn--action"
-        onClick={() => setSettingsOpen(!settingsOpen)}
-        aria-label="Settings"
-        title="Settings"
-      >
-        <Settings size={14} />
-      </button>
+      {hasProject && !settingsOpen && (
+        <button
+          className="window-controls__btn window-controls__btn--action"
+          onClick={toggleSidebar}
+          aria-label={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
+          title={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
+        >
+          {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+        </button>
+      )}
     </>
   );
 

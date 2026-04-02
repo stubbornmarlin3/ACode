@@ -8,6 +8,7 @@ import { clipboardWrite } from "../../utils/clipboard";
 import {
   useClaudeStore,
   useClaudeStateForKey,
+  useActiveClaudeState,
   ChatMessage,
   ToolUseEntry,
   ToolResultEntry,
@@ -32,8 +33,8 @@ function ModelSelector({ currentModel }: { currentModel: string }) {
   const [open, setOpen] = useState(false);
   const setModel = useClaudeStore((s) => s.setModel);
   const reconnect = useClaudeStore((s) => s.reconnect);
-  const selectedModel = useClaudeStateForKey(null, (s) => s.selectedModel);
-  const isStreaming = useClaudeStateForKey(null, (s) => s.isStreaming);
+  const selectedModel = useActiveClaudeState((s) => s.selectedModel);
+  const isStreaming = useActiveClaudeState((s) => s.isStreaming);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

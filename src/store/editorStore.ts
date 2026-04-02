@@ -133,6 +133,45 @@ export function isMarkdownFile(name: string): boolean {
   return ext === "md" || ext === "mdx" || ext === "markdown";
 }
 
+/** Extensions recognized as text-editable files */
+const KNOWN_TEXT_EXTENSIONS = new Set([
+  // Code
+  "js", "jsx", "ts", "tsx", "mjs", "cjs", "json", "jsonc",
+  "py", "pyw", "pyi", "pyx", "rs", "go", "java", "kt", "kts",
+  "scala", "groovy", "gradle", "c", "h", "cpp", "cxx", "cc", "hpp",
+  "cs", "rb", "gemspec", "php", "swift", "m", "mm",
+  // Web
+  "html", "htm", "css", "scss", "sass", "less", "svelte", "vue",
+  // Data / Config
+  "xml", "svg", "plist", "yaml", "yml", "toml", "ini", "env", "cfg",
+  "conf", "properties", "editorconfig",
+  // Markup / Docs
+  "md", "mdx", "markdown", "txt", "rst", "adoc", "tex", "log",
+  // Shell
+  "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+  // SQL / DB
+  "sql", "sqlite",
+  // Other text
+  "csv", "tsv", "diff", "patch", "gitignore", "gitattributes",
+  "dockerignore", "lock", "mod", "sum",
+]);
+
+/** Well-known filenames that are text even without an extension */
+const KNOWN_TEXT_FILENAMES = new Set([
+  "Dockerfile", "Makefile", "CMakeLists.txt", "LICENSE", "LICENCE",
+  "Rakefile", "Gemfile", "Procfile", "Vagrantfile", ".gitignore",
+  ".gitattributes", ".editorconfig", ".prettierrc", ".eslintrc",
+  ".babelrc", ".npmrc", ".env",
+]);
+
+/** Returns true if the file is recognized as a text file */
+export function hasKnownTextExtension(name: string): boolean {
+  if (KNOWN_TEXT_FILENAMES.has(name)) return true;
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx <= 0) return false;
+  return KNOWN_TEXT_EXTENSIONS.has(name.slice(dotIdx + 1).toLowerCase());
+}
+
 interface EditorStore {
   workspaceRoot: string | null;
   /** Remembers the last non-null workspaceRoot so dialogs can use it after clearing */
@@ -148,6 +187,10 @@ interface EditorStore {
   markdownModes: Record<string, MarkdownMode>;
   /** Tracks files that entered "off" mode by clicking the preview (auto-restore on save) */
   markdownAutoRestore: Set<string>;
+  /** Per-file hex editor mode */
+  hexModes: Record<string, boolean>;
+  /** Saved text content/baseContent before entering hex mode, keyed by path */
+  preHexSnapshots: Record<string, { content: string; baseContent: string; isDirty: boolean }>;
 
   setWorkspaceRoot: (path: string | null) => Promise<void>;
   openFile: (path: string, name: string) => Promise<void>;
@@ -165,6 +208,8 @@ interface EditorStore {
   setUnsavedConfirmation: (confirmation: UnsavedConfirmation | null) => void;
   setMarkdownMode: (path: string, mode: MarkdownMode) => void;
   cycleMarkdownMode: (path: string) => void;
+  setHexMode: (path: string, hex: boolean) => void;
+  toggleHexMode: (path: string) => void;
 }
 
 /** Max number of project states to keep cached in memory. */
@@ -216,6 +261,8 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
   unsavedConfirmation: null,
   markdownModes: {},
   markdownAutoRestore: new Set<string>(),
+  hexModes: {},
+  preHexSnapshots: {},
 
   setWorkspaceRoot: async (path) => {
     const { workspaceRoot, fileTree, openFiles, activeFilePath, expandedDirs, projectStates } = get();
@@ -441,16 +488,28 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       persistCurrentSessions();
       return;
     }
-    const raw = await invoke<string>("read_file_contents", { path });
-    const content = raw.replace(/\r\n/g, "\n");
+    // Try to read as text first; if it fails (binary/non-UTF-8), open in hex mode
+    let content = "";
+    let isBinary = false;
+    try {
+      const raw = await invoke<string>("read_file_contents", { path });
+      content = raw.replace(/\r\n/g, "\n");
+    } catch {
+      // File is not valid text — open anyway with empty content, default to hex
+      isBinary = true;
+    }
     set((s) => {
       const next: Partial<EditorStore> = {
         openFiles: [...s.openFiles, { path, name, content, baseContent: content, isDirty: false }],
         activeFilePath: path,
       };
       // Auto-set markdown files to preview mode on first open
-      if (isMarkdownFile(name) && !s.markdownModes[path]) {
+      if (!isBinary && isMarkdownFile(name) && !s.markdownModes[path]) {
         next.markdownModes = { ...s.markdownModes, [path]: "preview" };
+      }
+      // Auto-set hex mode for binary files (couldn't read as text)
+      if (isBinary && s.hexModes[path] === undefined) {
+        next.hexModes = { ...s.hexModes, [path]: true };
       }
       return next as any;
     });
@@ -482,11 +541,13 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
         nextActive =
           remaining[Math.min(idx, remaining.length - 1)]?.path ?? null;
       }
-      // Clean up markdown state
+      // Clean up markdown and hex state
       const { [path]: _m, ...restModes } = s.markdownModes;
+      const { [path]: _h, ...restHex } = s.hexModes;
+      const { [path]: _p, ...restSnapshots } = s.preHexSnapshots;
       const nextAutoRestore = new Set(s.markdownAutoRestore);
       nextAutoRestore.delete(path);
-      return { openFiles: remaining, activeFilePath: nextActive, markdownModes: restModes, markdownAutoRestore: nextAutoRestore };
+      return { openFiles: remaining, activeFilePath: nextActive, markdownModes: restModes, hexModes: restHex, preHexSnapshots: restSnapshots, markdownAutoRestore: nextAutoRestore };
     });
     persistCurrentSessions();
   },
@@ -667,6 +728,95 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
       return { markdownModes: { ...s.markdownModes, [path]: next }, markdownAutoRestore: nextAutoRestore };
     });
   },
+
+  setHexMode: (path, hex) => {
+    set((s) => ({ hexModes: { ...s.hexModes, [path]: hex } }));
+  },
+
+  toggleHexMode: (path) => {
+    const s = get();
+    const wasHex = !!s.hexModes[path];
+    const file = s.openFiles.find((f) => f.path === path);
+
+    if (file && wasHex) {
+      // Switching from hex → text
+      const snapshot = s.preHexSnapshots[path];
+      if (snapshot && !file.isDirty) {
+        // No hex edits were made — restore original text exactly
+        const { [path]: _, ...restSnapshots } = s.preHexSnapshots;
+        set((st) => ({
+          hexModes: { ...st.hexModes, [path]: false },
+          preHexSnapshots: restSnapshots,
+          openFiles: st.openFiles.map((f) =>
+            f.path === path ? { ...f, content: snapshot.content, baseContent: snapshot.baseContent, isDirty: snapshot.isDirty } : f
+          ),
+        }));
+        return;
+      }
+      // Hex edits were made — decode hex back to text
+      try {
+        const decoder = new TextDecoder("utf-8", { fatal: false });
+        const hex = file.content;
+        const byteArr = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < hex.length; i += 2) {
+          byteArr[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+        }
+        const text = decoder.decode(byteArr);
+        const baseHex = file.baseContent;
+        const baseBytes = new Uint8Array(baseHex.length / 2);
+        for (let i = 0; i < baseHex.length; i += 2) {
+          baseBytes[i / 2] = parseInt(baseHex.substring(i, i + 2), 16);
+        }
+        const baseText = decoder.decode(baseBytes);
+        const { [path]: _s, ...restSnapshots } = s.preHexSnapshots;
+        set((st) => ({
+          hexModes: { ...st.hexModes, [path]: false },
+          preHexSnapshots: restSnapshots,
+          openFiles: st.openFiles.map((f) =>
+            f.path === path ? { ...f, content: text, baseContent: baseText, isDirty: text !== baseText } : f
+          ),
+        }));
+        return;
+      } catch {
+        // If decode fails, just toggle without converting
+      }
+    }
+
+    if (file && !wasHex) {
+      // Switching from text → hex: snapshot the current text state
+      const snapshot = { content: file.content, baseContent: file.baseContent, isDirty: file.isDirty };
+      if (file.isDirty) {
+        // Encode dirty text edits to hex
+        const encoder = new TextEncoder();
+        const byteArr = encoder.encode(file.content);
+        const hexParts: string[] = [];
+        for (let i = 0; i < byteArr.length; i++) {
+          hexParts.push(byteArr[i].toString(16).padStart(2, "0"));
+        }
+        const hexContent = hexParts.join("");
+        const baseBytes = encoder.encode(file.baseContent);
+        const baseParts: string[] = [];
+        for (let i = 0; i < baseBytes.length; i++) {
+          baseParts.push(baseBytes[i].toString(16).padStart(2, "0"));
+        }
+        set((st) => ({
+          hexModes: { ...st.hexModes, [path]: true },
+          preHexSnapshots: { ...st.preHexSnapshots, [path]: snapshot },
+          openFiles: st.openFiles.map((f) =>
+            f.path === path ? { ...f, content: hexContent, baseContent: baseParts.join(""), isDirty: true } : f
+          ),
+        }));
+      } else {
+        set((st) => ({
+          hexModes: { ...st.hexModes, [path]: true },
+          preHexSnapshots: { ...st.preHexSnapshots, [path]: snapshot },
+        }));
+      }
+      return;
+    }
+
+    set((st) => ({ hexModes: { ...st.hexModes, [path]: !wasHex } }));
+  },
 }), { name: "editorStore", enabled: import.meta.env.DEV }));
 
 /* ── Custom selector hooks ── */
@@ -690,6 +840,8 @@ export function useEditorActions() {
       setUnsavedConfirmation: s.setUnsavedConfirmation,
       setMarkdownMode: s.setMarkdownMode,
       cycleMarkdownMode: s.cycleMarkdownMode,
+      setHexMode: s.setHexMode,
+      toggleHexMode: s.toggleHexMode,
     }))
   );
 }

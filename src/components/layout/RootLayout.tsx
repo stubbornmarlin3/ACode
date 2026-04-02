@@ -20,6 +20,7 @@ import { EditorTabBar } from "../editor/EditorTabBar";
 import { EditorPane } from "../editor/EditorPane";
 import { MarkdownPreview } from "../editor/MarkdownPreview";
 import { DiffViewer } from "../editor/DiffViewer";
+import { HexEditor } from "../editor/HexEditor";
 import { SettingsScreen } from "../settings/SettingsScreen";
 import { WindowControls } from "./WindowControls";
 import { TitleBarLogo } from "./TitleBarLogo";
@@ -265,7 +266,9 @@ export function RootLayout() {
   const gitSelectedFile = useGitStore((s) => s.selectedFile);
   const activeFilePath = useEditorStore((s) => s.activeFilePath);
   const markdownModes = useEditorStore((s) => s.markdownModes);
+  const hexModes = useEditorStore((s) => s.hexModes);
   const mdMode = activeFilePath ? markdownModes[activeFilePath] : undefined;
+  const isHexMode = activeFilePath ? !!hexModes[activeFilePath] : false;
   const hasProject = activeProjectId !== null;
   const hasProjectsInRail = projects.length > 0;
 
@@ -356,9 +359,22 @@ export function RootLayout() {
             const state = useEditorStore.getState();
             const file = state.openFiles.find((f) => f.path === state.activeFilePath);
             if (file) {
-              invoke("save_file", { path: file.path, content: file.content }).then(() => {
-                useEditorStore.getState().markFileSaved(file.path);
-              });
+              const isHex = !!state.hexModes[file.path];
+              if (isHex) {
+                // Content is a hex string — convert back to bytes
+                const hex = file.content;
+                const byteArr: number[] = [];
+                for (let i = 0; i < hex.length; i += 2) {
+                  byteArr.push(parseInt(hex.substring(i, i + 2), 16));
+                }
+                invoke("write_file_bytes", { path: file.path, bytes: byteArr }).then(() => {
+                  useEditorStore.getState().markFileSaved(file.path);
+                });
+              } else {
+                invoke("save_file", { path: file.path, content: file.content }).then(() => {
+                  useEditorStore.getState().markFileSaved(file.path);
+                });
+              }
             }
             return;
           }
@@ -468,8 +484,8 @@ export function RootLayout() {
         </div>
         <div className="editor-card">
           <EditorTabBar />
-          <div className={`editor-card__body${!gitSelectedFile && mdMode === "split" ? " editor-card__body--split" : ""}`}>
-            {gitSelectedFile ? <DiffViewer /> : (
+          <div className={`editor-card__body${!gitSelectedFile && !isHexMode && mdMode === "split" ? " editor-card__body--split" : ""}`}>
+            {gitSelectedFile ? <DiffViewer /> : isHexMode ? <HexEditor /> : (
               <>
                 <EditorPane />
                 <MarkdownPreview variant="full" />

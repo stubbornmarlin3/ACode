@@ -1,0 +1,141 @@
+.hex-editor {
+  flex: 1;
+  overflow: auto;
+  height: 100%;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  padding: 0;
+}
+
+.hex-editor__table {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  padding: 0 12px 12px;
+}
+
+.hex-editor__col-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg-base);
+  z-index: 1;
+  padding: 6px 0;
+  color: var(--text-disabled);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.hex-editor__col-header--offset {
+  padding-left: 4px;
+}
+
+.hex-editor__col-header--hex {
+  padding: 6px 4px;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+.hex-editor__col-header--ascii {
+  padding-left: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-right: 8px;
+}
+
+.hex-editor__size-label {
+  color: var(--text-disabled);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.hex-editor__row-offset {
+  color: var(--text-disabled);
+  padding: 1px 4px;
+  user-select: none;
+}
+
+.hex-editor__row-hex {
+  padding: 1px 4px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.hex-editor__row-ascii {
+  padding: 1px 8px;
+  color: var(--text-secondary);
+  white-space: pre;
+}
+
+.hex-editor__byte {
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.hex-editor__byte:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hex-editor__byte--editing {
+  visibility: hidden;
+}
+
+.hex-editor__byte--null {
+  color: var(--text-disabled);
+}
+
+.hex-editor__byte--printable {
+  color: var(--text-primary);
+}
+
+.hex-editor__byte--high {
+  color: #d19a66;
+}
+
+.hex-editor__byte--control {
+  color: #e06c75;
+}
+
+.hex-editor__ascii--dot {
+  color: var(--text-disabled);
+}
+
+.hex-editor__ascii--editing {
+  background: rgba(96, 165, 250, 0.15);
+  color: var(--accent-blue);
+  border-radius: 2px;
+}
+
+/* Single floating input positioned over the active byte */
+.hex-editor__edit-input {
+  position: absolute;
+  z-index: 3;
+  width: calc(2ch + 1px);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-align: center;
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--accent-blue);
+  border-radius: 2px;
+  outline: none;
+  padding: 0;
+  margin: -2px 0 0 -1px;
+  height: calc(1.5em - 1px);
+  box-sizing: content-box;
+  caret-color: var(--text-primary);
+}
+
+.hex-editor__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+}

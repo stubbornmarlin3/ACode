@@ -408,6 +408,21 @@ fn read_file_contents(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Resul
 }
 
 #[tauri::command]
+fn read_file_bytes(path: String, ws: State<'_, Arc<WorkspaceState>>) -> Result<Vec<u8>, String> {
+    let validated = validate_path(&path, &ws)?;
+    fs::read(&validated).map_err(|e| format!("Failed to read {}: {}", path, e))
+}
+
+#[tauri::command]
+fn write_file_bytes(path: String, bytes: Vec<u8>, ws: State<'_, Arc<WorkspaceState>>) -> Result<(), String> {
+    let validated = validate_path(&path, &ws)?;
+    if let Some(parent) = validated.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create dirs: {}", e))?;
+    }
+    fs::write(&validated, &bytes).map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
+#[tauri::command]
 async fn resolve_project_icon(project_path: String) -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(move || {
         let icon_names: &[&str] = &[
@@ -1229,6 +1244,8 @@ pub fn run() {
             unregister_workspace_root,
             read_dir_tree,
             read_file_contents,
+            read_file_bytes,
+            write_file_bytes,
             resolve_project_icon,
             expand_dir,
             tab_complete,

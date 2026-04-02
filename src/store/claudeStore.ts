@@ -663,10 +663,11 @@ export function useActiveClaudeState<T>(selector: (s: ClaudeProjectState) => T):
   });
 }
 
-/** Selector hook to read a specific session's Claude state by key (falls back to activeKey). */
+/** Selector hook to read a specific session's Claude state by key.
+ *  When key is null, returns the default empty state (not the active session). */
 export function useClaudeStateForKey<T>(key: string | null, selector: (s: ClaudeProjectState) => T): T {
   return useClaudeStore((s) => {
-    const proj = getProj(s.projects, key ?? s.activeKey);
+    const proj = getProj(s.projects, key);
     return selector(proj);
   });
 }
