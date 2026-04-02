@@ -7,6 +7,17 @@
   overflow-y: auto;
 }
 
+.git-panel__error {
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-red, #f85149);
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.2);
+  border-radius: 6px;
+  word-break: break-word;
+}
+
 .git-panel__empty {
   color: var(--text-disabled);
   font-size: 12px;
@@ -440,6 +451,27 @@
   border-radius: 4px;
 }
 
+.git-commit-box__merge-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--accent-orange, #f0883e);
+  background: rgba(240, 136, 62, 0.08);
+  border: 1px solid rgba(240, 136, 62, 0.2);
+  border-radius: 4px;
+}
+
+.git-commit-box__btn--danger {
+  color: var(--accent-red, #f85149);
+}
+
+.git-commit-box__btn--danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: var(--accent-red, #f85149);
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -549,6 +581,7 @@
 .git-file-item__status--deleted { color: var(--accent-red); }
 .git-file-item__status--renamed { color: var(--accent-blue); }
 .git-file-item__status--untracked { color: var(--text-disabled); }
+.git-file-item__status--conflict { color: var(--accent-orange, #f0883e); font-weight: 600; }
 
 .git-file-item__path {
   flex: 1;

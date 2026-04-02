@@ -3,7 +3,6 @@ import { GitFork, ChevronDown, MoreHorizontal, RefreshCw, GitBranchPlus, Loader2
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
 import { useLayoutStore } from "../../../store/layoutStore";
-import { useNotificationStore } from "../../../store/notificationStore";
 
 export function GitBranchSelector() {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
@@ -17,6 +16,7 @@ export function GitBranchSelector() {
   const pull = useGitStore((s) => s.pull);
   const sync = useGitStore((s) => s.sync);
   const publishBranch = useGitStore((s) => s.publishBranch);
+  const setError = useGitStore((s) => s.setError);
   const status = useGitStore((s) => s.status);
   const hasUpstream = status?.has_upstream ?? false;
 
@@ -56,7 +56,11 @@ export function GitBranchSelector() {
   const handleSwitch = async (branch: string) => {
     if (!workspaceRoot || branch === branches.current) return;
     setBranchOpen(false);
-    await checkoutBranch(workspaceRoot, branch);
+    try {
+      await checkoutBranch(workspaceRoot, branch);
+    } catch (err) {
+      setError(`Switch branch failed: ${String(err)}`);
+    }
   };
 
   const handleDeleteBranch = (name: string, isRemote: boolean, e: React.MouseEvent) => {
@@ -82,29 +86,17 @@ export function GitBranchSelector() {
         }
       }
     } catch (err) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
-        message: `Delete branch failed: ${String(err)}`,
-      });
+      setError(`Delete branch failed: ${String(err)}`);
     }
   };
 
-  const runAction = async (label: string, fn: () => Promise<void>) => {
+  const runAction = async (label: string, fn: () => Promise<unknown>) => {
     if (!workspaceRoot) return;
     setMenuOpen(false);
     try {
       await fn();
     } catch (e) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
-        message: `${label} failed: ${String(e)}`,
-      });
+      setError(`${label} failed: ${String(e)}`);
     }
   };
 
@@ -116,13 +108,7 @@ export function GitBranchSelector() {
       await gitFetch(workspaceRoot);
       await fetchBranches(workspaceRoot);
     } catch (e) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
-        message: `Fetch failed: ${String(e)}`,
-      });
+      setError(`Fetch failed: ${String(e)}`);
     } finally {
       setFetching(false);
     }

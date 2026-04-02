@@ -14,7 +14,16 @@ export function GitPanel() {
   const fetchBranches = useGitStore((s) => s.fetchBranches);
   const fetchRemoteInfo = useGitStore((s) => s.fetchRemoteInfo);
   const gitFetch = useGitStore((s) => s.fetch);
+  const error = useGitStore((s) => s.error);
+  const clearError = useGitStore((s) => s.clearError);
   const [initializing, setInitializing] = useState(false);
+
+  // Auto-dismiss error after 3s
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(clearError, 3000);
+    return () => clearTimeout(timer);
+  }, [error, clearError]);
   const autoFetchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -56,6 +65,9 @@ export function GitPanel() {
   return (
     <div className="git-panel">
       <GitBranchSelector />
+      {error && (
+        <div className="git-panel__error">{error}</div>
+      )}
       <GitCommitBox />
       <GitStatusList />
     </div>

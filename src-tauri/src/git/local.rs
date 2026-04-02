@@ -1,7 +1,8 @@
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use git2::{Cred, CredentialType, DiffOptions, RemoteCallbacks, Repository, StatusOptions};
+use git2::{Cred, CredentialType, DiffOptions, MergeOptions, RemoteCallbacks, Repository, StashFlags, StatusOptions};
 
 use super::types::*;
 
@@ -154,6 +155,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
                 is_repo: false,
                 has_upstream: false,
                 has_remote: false,
+                repo_state: "clean".to_string(),
             });
         }
     };
@@ -271,6 +273,15 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
     let _ = workdir; // suppress unused warning
     let has_remote = repo.find_remote("origin").is_ok();
 
+    let repo_state = match repo.state() {
+        git2::RepositoryState::Clean => "clean",
+        git2::RepositoryState::Merge => "merge",
+        git2::RepositoryState::Rebase
+        | git2::RepositoryState::RebaseInteractive
+        | git2::RepositoryState::RebaseMerge => "rebase",
+        _ => "other",
+    }.to_string();
+
     Ok(GitStatus {
         changes,
         branch,
@@ -279,6 +290,7 @@ pub async fn git_status(path: String) -> Result<GitStatus, String> {
         is_repo: true,
         has_upstream,
         has_remote,
+        repo_state,
     })
     })
     .await
@@ -394,6 +406,8 @@ pub fn git_unstage(repo_path: String, file_paths: Vec<String>) -> Result<(), Str
 pub fn git_commit(repo_path: String, message: String) -> Result<String, String> {
     let repo = Repository::discover(&repo_path)
         .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    check_and_clean_stale_lock(&repo)?;
 
     let mut index = repo.index().map_err(|e| format!("Failed to get index: {}", e))?;
     let tree_oid = index.write_tree().map_err(|e| format!("Failed to write tree: {}", e))?;
@@ -756,11 +770,14 @@ pub async fn git_fetch(repo_path: String) -> Result<(), String> {
 }
 
 /// Push to remote. If set_upstream is true, sets tracking branch.
+/// Uses push_update_reference callback to detect rejections that remote.push() doesn't report.
 #[tauri::command]
 pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let repo = Repository::discover(&repo_path)
             .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+        check_and_clean_stale_lock(&repo)?;
 
         let branch = match repo.head() {
             Ok(head) => head.shorthand().unwrap_or("HEAD").to_string(),
@@ -772,10 +789,36 @@ pub async fn git_push(repo_path: String, set_upstream: Option<bool>) -> Result<(
             .find_remote("origin")
             .map_err(|_| "No remote 'origin' configured. Add a remote first with: git remote add origin <url>".to_string())?;
 
-        let mut po = make_push_options();
+        // Build push options with rejection detection callback
+        let push_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let push_error_clone = push_error.clone();
+
+        let mut callbacks = make_remote_callbacks(true);
+        callbacks.push_update_reference(move |_refname, status| {
+            if let Some(msg) = status {
+                *push_error_clone.lock().unwrap() = Some(msg.to_string());
+            }
+            Ok(())
+        });
+
+        let mut po = git2::PushOptions::new();
+        po.remote_callbacks(callbacks);
+
         remote
             .push(&[&refspec], Some(&mut po))
-            .map_err(|e| format!("git push failed: {}", e))?;
+            .map_err(|e| {
+                let err_str = e.to_string();
+                if err_str.contains("authentication") || err_str.contains("credential") {
+                    format!("AUTH_FAILED:{}", err_str)
+                } else {
+                    format!("NETWORK:git push failed: {}", err_str)
+                }
+            })?;
+
+        // Check if any ref was rejected (push returns Ok even when rejected)
+        if let Some(msg) = push_error.lock().unwrap().take() {
+            return Err(format!("PUSH_REJECTED:{}", msg));
+        }
 
         if set_upstream.unwrap_or(false) {
             if let Ok(mut local_branch) = repo.find_branch(&branch, git2::BranchType::Local) {
@@ -812,18 +855,39 @@ fn has_uncommitted_changes(repo: &Repository) -> bool {
     }
 }
 
-/// Pull from remote (fetch + fast-forward merge).
-/// Refuses to pull if there are uncommitted changes to avoid data loss.
+/// Pull from remote (fetch + merge). Supports fast-forward, real merge, and auto-stash.
 #[tauri::command]
-pub async fn git_pull(repo_path: String) -> Result<(), String> {
+pub async fn git_pull(repo_path: String) -> Result<PullResult, String> {
     tokio::task::spawn_blocking(move || {
-        let repo = Repository::discover(&repo_path)
+        let mut repo = Repository::discover(&repo_path)
             .map_err(|e| format!("Failed to open repo: {}", e))?;
 
-        // Guard: refuse to pull with uncommitted changes
-        if has_uncommitted_changes(&repo) {
-            return Err("Cannot pull with uncommitted changes. Commit or stash your changes first.".to_string());
+        // Guard: check for stale index.lock
+        check_and_clean_stale_lock(&repo)?;
+
+        // Guard: refuse if repo is already in a non-clean state (e.g. mid-merge)
+        let state = repo.state();
+        if state != git2::RepositoryState::Clean {
+            return Err(format!("REPO_STATE:Repository is in {:?} state. Complete or abort the current operation first.", state));
         }
+
+        // Auto-stash if there are uncommitted changes
+        let mut did_stash = false;
+        if has_uncommitted_changes(&repo) {
+            let sig = repo.signature().map_err(|e| format!("Failed to get signature: {}", e))?;
+            match repo.stash_save(&sig, "ACode: auto-stash before pull", Some(StashFlags::INCLUDE_UNTRACKED)) {
+                Ok(_) => { did_stash = true; }
+                Err(e) if e.code() == git2::ErrorCode::NotFound => { /* nothing to stash */ }
+                Err(e) => return Err(format!("Failed to stash changes: {}", e)),
+            }
+        }
+
+        // Helper: pop stash on error paths
+        let pop_stash_on_error = |repo: &mut Repository, did_stash: bool| {
+            if did_stash {
+                let _ = repo.stash_pop(0, None);
+            }
+        };
 
         let branch = repo
             .head()
@@ -834,11 +898,23 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
         // 1. Fetch
         let mut remote = repo
             .find_remote("origin")
-            .map_err(|e| format!("Failed to find remote 'origin': {}", e))?;
+            .map_err(|e| {
+                pop_stash_on_error(&mut Repository::discover(&repo_path).unwrap(), did_stash);
+                format!("Failed to find remote 'origin': {}", e)
+            })?;
         let mut fo = make_fetch_options();
-        remote
-            .fetch(&[&branch], Some(&mut fo), None)
-            .map_err(|e| format!("git fetch failed: {}", e))?;
+        if let Err(e) = remote.fetch(&[&branch], Some(&mut fo), None) {
+            // Pop stash back before returning error
+            if did_stash {
+                // Re-discover repo since remote borrows it
+                drop(remote);
+                if let Ok(mut r) = Repository::discover(&repo_path) {
+                    let _ = r.stash_pop(0, None);
+                }
+            }
+            return Err(format!("NETWORK:git fetch failed: {}", e));
+        }
+        drop(remote); // release borrow
 
         // 2. Get FETCH_HEAD
         let fetch_head = repo
@@ -849,15 +925,28 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to resolve FETCH_HEAD: {}", e))?;
 
         // 3. Merge analysis
-        let (analysis, _) = repo
+        let (analysis, preference) = repo
             .merge_analysis(&[&fetch_commit])
             .map_err(|e| format!("Merge analysis failed: {}", e))?;
 
-        if analysis.is_up_to_date() {
-            return Ok(());
+        // Respect merge.ff=only preference
+        if preference.is_fastforward_only() && !analysis.is_fast_forward() && !analysis.is_up_to_date() {
+            if did_stash {
+                if let Ok(mut r) = Repository::discover(&repo_path) { let _ = r.stash_pop(0, None); }
+            }
+            return Err("Fast-forward only is configured (merge.ff=only) but a merge is required. Use a terminal to resolve.".to_string());
         }
 
-        if analysis.is_fast_forward() {
+        let mut result = PullResult {
+            status: "up_to_date".to_string(),
+            conflicts: vec![],
+            merge_commit: None,
+            stash_conflicts: false,
+        };
+
+        if analysis.is_up_to_date() {
+            // Nothing to do — just pop stash if we stashed
+        } else if analysis.is_fast_forward() {
             let refname = format!("refs/heads/{}", branch);
             let mut reference = repo
                 .find_reference(&refname)
@@ -868,7 +957,6 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
             repo.set_head(&refname)
                 .map_err(|e| format!("Failed to set HEAD: {}", e))?;
 
-            // Use checkout (not hard reset) to update working directory safely
             let commit_obj = repo
                 .find_object(fetch_commit.id(), None)
                 .map_err(|e| format!("Failed to find commit object: {}", e))?;
@@ -876,10 +964,108 @@ pub async fn git_pull(repo_path: String) -> Result<(), String> {
             checkout.safe();
             repo.checkout_tree(&commit_obj, Some(&mut checkout))
                 .map_err(|e| format!("Failed to checkout new head: {}", e))?;
-            return Ok(());
+
+            result.status = "fast_forward".to_string();
+        } else if analysis.is_normal() {
+            // Real merge required
+            // Guard: detached HEAD
+            if repo.head_detached().unwrap_or(false) {
+                if did_stash {
+                    if let Ok(mut r) = Repository::discover(&repo_path) { let _ = r.stash_pop(0, None); }
+                }
+                return Err("Cannot merge with detached HEAD. Checkout a branch first.".to_string());
+            }
+
+            // Perform merge (updates index + working directory, sets MERGE_HEAD)
+            let mut merge_opts = MergeOptions::new();
+            let mut checkout_opts = git2::build::CheckoutBuilder::new();
+            checkout_opts.safe();
+            checkout_opts.allow_conflicts(true);
+            repo.merge(&[&fetch_commit], Some(&mut merge_opts), Some(&mut checkout_opts))
+                .map_err(|e| {
+                    if did_stash {
+                        if let Ok(mut r) = Repository::discover(&repo_path) { let _ = r.stash_pop(0, None); }
+                    }
+                    format!("Merge failed: {}", e)
+                })?;
+
+            let mut index = repo.index()
+                .map_err(|e| format!("Failed to get index: {}", e))?;
+
+            if index.has_conflicts() {
+                // Collect conflict paths
+                let conflicts: Vec<String> = index.conflicts()
+                    .map_err(|e| format!("Failed to read conflicts: {}", e))?
+                    .filter_map(|c| c.ok())
+                    .filter_map(|c| {
+                        c.our.or(c.their).or(c.ancestor)
+                            .and_then(|entry| String::from_utf8(entry.path).ok())
+                    })
+                    .collect();
+
+                // Do NOT cleanup_state — leave repo in merge state for user to resolve
+                result.status = "conflicts".to_string();
+                result.conflicts = conflicts;
+                // Don't pop stash if there are conflicts — user needs to resolve merge first
+                return Ok(result);
+            }
+
+            // No conflicts — create merge commit
+            let tree_oid = index.write_tree()
+                .map_err(|e| format!("Failed to write tree: {}", e))?;
+            let tree = repo.find_tree(tree_oid)
+                .map_err(|e| format!("Failed to find tree: {}", e))?;
+            let sig = repo.signature()
+                .map_err(|e| format!("Failed to get signature: {}", e))?;
+
+            let our_commit = repo.head()
+                .map_err(|e| format!("Failed to get HEAD: {}", e))?
+                .peel_to_commit()
+                .map_err(|e| format!("Failed to peel HEAD to commit: {}", e))?;
+            let their_commit = repo.find_commit(fetch_commit.id())
+                .map_err(|e| format!("Failed to find fetch commit: {}", e))?;
+
+            let msg = format!("Merge remote-tracking branch 'origin/{}'", branch);
+            let oid = repo.commit(
+                Some("HEAD"), &sig, &sig, &msg, &tree,
+                &[&our_commit, &their_commit],
+            ).map_err(|e| format!("Failed to create merge commit: {}", e))?;
+
+            // Checkout HEAD to update working directory
+            let mut co = git2::build::CheckoutBuilder::new();
+            co.force();
+            repo.checkout_head(Some(&mut co))
+                .map_err(|e| format!("Failed to checkout head: {}", e))?;
+
+            repo.cleanup_state()
+                .map_err(|e| format!("Failed to cleanup merge state: {}", e))?;
+
+            result.status = "merged".to_string();
+            result.merge_commit = Some(oid.to_string());
+        } else {
+            if did_stash {
+                if let Ok(mut r) = Repository::discover(&repo_path) { let _ = r.stash_pop(0, None); }
+            }
+            return Err("Unexpected merge analysis result. Use a terminal to resolve.".to_string());
         }
 
-        Err("Non-fast-forward merge required — please pull from a terminal".to_string())
+        // Pop stash after successful pull
+        if did_stash {
+            // Need mutable repo for stash_pop
+            let mut repo_mut = Repository::discover(&repo_path)
+                .map_err(|e| format!("Failed to reopen repo: {}", e))?;
+            match repo_mut.stash_pop(0, None) {
+                Ok(()) => {}
+                Err(e) if e.code() == git2::ErrorCode::Conflict => {
+                    result.stash_conflicts = true;
+                }
+                Err(_) => {
+                    result.stash_conflicts = true;
+                }
+            }
+        }
+
+        Ok(result)
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
@@ -936,5 +1122,137 @@ pub fn git_add_remote(repo_path: String, name: String, url: String) -> Result<()
         .map_err(|e| format!("Failed to open repo: {}", e))?;
     repo.remote(&name, &url)
         .map_err(|e| format!("Failed to add remote '{}': {}", name, e))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Merge management commands
+// ---------------------------------------------------------------------------
+
+/// Check if the repo is in a merge state and list conflicted files.
+#[tauri::command]
+pub fn git_merge_status(repo_path: String) -> Result<MergeState, String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    let is_merging = repo.state() == git2::RepositoryState::Merge;
+
+    let mut conflicts = Vec::new();
+    let mut merge_message = String::new();
+
+    if is_merging {
+        let index = repo.index()
+            .map_err(|e| format!("Failed to get index: {}", e))?;
+        if let Ok(conflict_iter) = index.conflicts() {
+            for entry in conflict_iter.flatten() {
+                if let Some(path) = entry.our.or(entry.their).or(entry.ancestor)
+                    .and_then(|e| String::from_utf8(e.path).ok())
+                {
+                    conflicts.push(path);
+                }
+            }
+        }
+        // Read MERGE_MSG if it exists
+        let git_dir = repo.path();
+        let msg_path = git_dir.join("MERGE_MSG");
+        if let Ok(msg) = std::fs::read_to_string(&msg_path) {
+            merge_message = msg.trim().to_string();
+        }
+    }
+
+    Ok(MergeState {
+        is_merging,
+        conflicts,
+        merge_message,
+    })
+}
+
+/// Abort an in-progress merge — resets to HEAD.
+#[tauri::command]
+pub fn git_abort_merge(repo_path: String) -> Result<(), String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    if repo.state() != git2::RepositoryState::Merge {
+        return Err("Not in a merge state".to_string());
+    }
+
+    repo.cleanup_state()
+        .map_err(|e| format!("Failed to cleanup state: {}", e))?;
+
+    // Hard reset to HEAD to discard merge changes from index + working dir
+    let head = repo.head()
+        .map_err(|e| format!("Failed to get HEAD: {}", e))?;
+    let head_commit = head.peel_to_commit()
+        .map_err(|e| format!("Failed to peel HEAD: {}", e))?;
+    repo.reset(head_commit.as_object(), git2::ResetType::Hard, None)
+        .map_err(|e| format!("Failed to reset: {}", e))?;
+
+    Ok(())
+}
+
+/// Complete a merge after all conflicts have been resolved.
+#[tauri::command]
+pub fn git_complete_merge(repo_path: String, message: String) -> Result<String, String> {
+    let repo = Repository::discover(&repo_path)
+        .map_err(|e| format!("Failed to open repo: {}", e))?;
+
+    if repo.state() != git2::RepositoryState::Merge {
+        return Err("Not in a merge state".to_string());
+    }
+
+    let mut index = repo.index()
+        .map_err(|e| format!("Failed to get index: {}", e))?;
+
+    if index.has_conflicts() {
+        return Err("Unresolved conflicts remain. Stage all conflicted files first.".to_string());
+    }
+
+    let tree_oid = index.write_tree()
+        .map_err(|e| format!("Failed to write tree: {}", e))?;
+    let tree = repo.find_tree(tree_oid)
+        .map_err(|e| format!("Failed to find tree: {}", e))?;
+    let sig = repo.signature()
+        .map_err(|e| format!("Failed to get signature: {}", e))?;
+
+    let head_commit = repo.head()
+        .map_err(|e| format!("Failed to get HEAD: {}", e))?
+        .peel_to_commit()
+        .map_err(|e| format!("Failed to peel HEAD: {}", e))?;
+
+    let merge_head_ref = repo.find_reference("MERGE_HEAD")
+        .map_err(|e| format!("Failed to find MERGE_HEAD: {}", e))?;
+    let merge_head_oid = merge_head_ref.target()
+        .ok_or_else(|| "MERGE_HEAD has no target".to_string())?;
+    let merge_head_commit = repo.find_commit(merge_head_oid)
+        .map_err(|e| format!("Failed to find MERGE_HEAD commit: {}", e))?;
+
+    let oid = repo.commit(
+        Some("HEAD"), &sig, &sig, &message, &tree,
+        &[&head_commit, &merge_head_commit],
+    ).map_err(|e| format!("Failed to create merge commit: {}", e))?;
+
+    repo.cleanup_state()
+        .map_err(|e| format!("Failed to cleanup merge state: {}", e))?;
+
+    Ok(oid.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Detect and clean stale index.lock files (Windows crash recovery).
+fn check_and_clean_stale_lock(repo: &Repository) -> Result<(), String> {
+    let git_dir = repo.path();
+    let lock_path = git_dir.join("index.lock");
+    if lock_path.exists() {
+        // Try to rename — if it succeeds, no other process holds it (stale lock)
+        let backup = git_dir.join("index.lock.stale");
+        match std::fs::rename(&lock_path, &backup) {
+            Ok(_) => { let _ = std::fs::remove_file(&backup); }
+            Err(_) => return Err("LOCK_FILE:Git index is locked by another process. Close other git tools and try again.".to_string()),
+        }
+    }
     Ok(())
 }

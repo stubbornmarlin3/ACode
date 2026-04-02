@@ -446,11 +446,11 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
           pendingInteractions = pendingInteractions
             .map((p) => {
               if (!resultMap.has(p.toolUseId)) return p;
-              // Question/plan tools: mark as auto-resolved (keep visible with answer)
-              if (p.category === "question" || p.category === "plan-exit" || p.category === "plan-enter") {
+              // Question tools: mark as auto-resolved (keep visible with answer)
+              if (p.category === "question") {
                 return { ...p, autoAnswer: resultMap.get(p.toolUseId) || "auto" };
               }
-              // Edit/bash/generic: remove completely
+              // Plan/edit/bash/generic: remove completely once resolved
               return null;
             })
             .filter((p): p is PendingInteraction => p !== null);

@@ -3,13 +3,13 @@ import { X, GitBranchPlus, ChevronDown } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
 import { useLayoutStore } from "../../../store/layoutStore";
-import { useNotificationStore } from "../../../store/notificationStore";
 
 export function CreateBranchDialog() {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const branches = useGitStore((s) => s.branches);
   const createBranch = useGitStore((s) => s.createBranch);
   const checkoutBranch = useGitStore((s) => s.checkoutBranch);
+  const setError = useGitStore((s) => s.setError);
   const setCreateBranchOpen = useLayoutStore((s) => s.setCreateBranchOpen);
 
   const [name, setName] = useState("");
@@ -36,13 +36,7 @@ export function CreateBranchDialog() {
       }
       close();
     } catch (e) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: workspaceRoot.split(/[\\/]/).pop() ?? "",
-        message: `Create branch failed: ${String(e)}`,
-      });
+      setError(`Create branch failed: ${String(e)}`);
     } finally {
       setCreating(false);
     }

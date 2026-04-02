@@ -12,12 +12,15 @@ interface Props {
   depth?: number;
 }
 
+const EMPTY_CONFLICTS: string[] = [];
+
 const STATUS_LABELS: Record<string, string> = {
   modified: "M",
   added: "A",
   deleted: "D",
   renamed: "R",
   untracked: "U",
+  conflict: "C",
 };
 
 export function GitFileItem({ change, depth = 0 }: Props) {
@@ -28,12 +31,15 @@ export function GitFileItem({ change, depth = 0 }: Props) {
   const discardChanges = useGitStore((s) => s.discardChanges);
   const selectFile = useGitStore((s) => s.selectFile);
   const fetchDiff = useGitStore((s) => s.fetchDiff);
+  const mergeConflicts = useGitStore((s) => s.mergeState?.conflicts ?? EMPTY_CONFLICTS);
   const contextMenu = useContextMenu();
 
   if (!workspaceRoot) return null;
 
   const fileName = change.path.split(/[\\/]/).pop() ?? change.path;
-  const statusClass = `git-file-item__status--${change.status}`;
+  const isConflict = mergeConflicts.includes(change.path);
+  const displayStatus = isConflict ? "conflict" : change.status;
+  const statusClass = `git-file-item__status--${displayStatus}`;
   const sep = workspaceRoot.includes("\\") ? "\\" : "/";
   const fullPath = workspaceRoot + sep + change.path;
 
@@ -124,7 +130,7 @@ export function GitFileItem({ change, depth = 0 }: Props) {
         <span className="git-file-item__icon">{getFileIcon(fileName, 14)}</span>
         <span className="git-file-item__path">{fileName}</span>
         <span className={`git-file-item__status ${statusClass}`}>
-          {STATUS_LABELS[change.status] ?? "?"}
+          {STATUS_LABELS[displayStatus] ?? "?"}
         </span>
         <span className="git-file-item__actions">
           {change.staged ? (

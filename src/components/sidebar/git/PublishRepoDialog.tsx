@@ -3,11 +3,11 @@ import { X, CloudUpload, Lock, Globe } from "lucide-react";
 import { useEditorStore } from "../../../store/editorStore";
 import { useGitStore } from "../../../store/gitStore";
 import { useLayoutStore } from "../../../store/layoutStore";
-import { useNotificationStore } from "../../../store/notificationStore";
 
 export function PublishRepoDialog() {
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);
   const publishToGitHub = useGitStore((s) => s.publishToGitHub);
+  const setError = useGitStore((s) => s.setError);
   const setPublishRepoOpen = useLayoutStore((s) => s.setPublishRepoOpen);
 
   // Default repo name from folder name
@@ -28,13 +28,7 @@ export function PublishRepoDialog() {
       await publishToGitHub(workspaceRoot, repoName.trim(), isPrivate, description.trim() || undefined);
       close();
     } catch (e) {
-      useNotificationStore.getState().addNotification({
-        sessionId: "git",
-        sessionType: "terminal",
-        projectPath: workspaceRoot,
-        projectName: folderName,
-        message: `Publish failed: ${String(e)}`,
-      });
+      setError(`Publish failed: ${String(e)}`);
     } finally {
       setPublishing(false);
     }

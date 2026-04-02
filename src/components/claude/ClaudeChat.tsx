@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check } from "lucide-react";
@@ -96,7 +96,8 @@ function ModelSelector({ currentModel }: { currentModel: string }) {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
     clipboardWrite(text).then((ok) => {
       if (ok) {
         setCopied(true);
@@ -130,53 +131,54 @@ function childrenToText(node: React.ReactNode): string {
 
 // ── Markdown renderer with code blocks ──────────────────────────────
 
+const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  a({ href, children, ...props }) {
+    return (
+      <a
+        href={href}
+        {...props}
+        onClick={(e) => {
+          e.preventDefault();
+          if (href) openUrl(href);
+        }}
+      >
+        {children}
+      </a>
+    );
+  },
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || "");
+    const isInline = !match && !className;
+    if (isInline) {
+      return (
+        <code className="claude-chat__inline-code" {...props}>
+          {children}
+        </code>
+      );
+    }
+    const raw = childrenToText(children).replace(/\n$/, "");
+    const oneline = !raw.includes("\n");
+    return (
+      <div className={`claude-chat__code-block${oneline ? " claude-chat__code-block--oneline" : ""}`}>
+        {match && (
+          <span className="claude-chat__code-lang">{match[1]}</span>
+        )}
+        <pre>
+          <code className={className} {...props}>
+            {children}
+          </code>
+        </pre>
+        <CopyButton text={raw} />
+      </div>
+    );
+  },
+};
+
+const REMARK_PLUGINS = [remarkGfm];
+
 function Markdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a({ href, children, ...props }) {
-          return (
-            <a
-              href={href}
-              {...props}
-              onClick={(e) => {
-                e.preventDefault();
-                if (href) openUrl(href);
-              }}
-            >
-              {children}
-            </a>
-          );
-        },
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const isInline = !match && !className;
-          if (isInline) {
-            return (
-              <code className="claude-chat__inline-code" {...props}>
-                {children}
-              </code>
-            );
-          }
-          const raw = childrenToText(children).replace(/\n$/, "");
-          const oneline = !raw.includes("\n");
-          return (
-            <div className={`claude-chat__code-block${oneline ? " claude-chat__code-block--oneline" : ""}`}>
-              {match && (
-                <span className="claude-chat__code-lang">{match[1]}</span>
-              )}
-              <pre>
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              </pre>
-              <CopyButton text={raw} />
-            </div>
-          );
-        },
-      }}
-    >
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
       {children}
     </ReactMarkdown>
   );
@@ -492,7 +494,7 @@ function UserText({ text, pasteRange }: { text: string; pasteRange?: { from: num
 
 // ── Message block ───────────────────────────────────────────────────
 
-function MessageBlock({
+const MessageBlock = React.memo(function MessageBlock({
   msg,
   showRole,
 }: {
@@ -572,7 +574,7 @@ function MessageBlock({
       )}
     </div>
   );
-}
+});
 
 // ── Interactive permission cards ─────────────────────────────────────
 

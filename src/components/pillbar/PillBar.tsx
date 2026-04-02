@@ -25,6 +25,7 @@ function stripAnsi(data: string): string {
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b[()][A-Z0-9]/g, "")
     .replace(/\x1b[>=<]/g, "")
+    .replace(/[^\r\n]*\r(?!\n)/g, "")                    // Simulate \r overwrite: discard text before bare \r
     .replace(/[\x00-\x09\x0b-\x1f]/g, "");
 }
 
@@ -407,7 +408,21 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
   const unitSpinColor: "blue" | "orange" = session.type === "terminal" ? "blue" : "orange";
 
   const unitRef = useRef<HTMLDivElement>(null);
+  const pillWrapperRef = useRef<HTMLDivElement>(null);
   const didDragRef = useRef(false);
+
+  // Track actual pill height (can exceed PILL_H when textarea is multiline)
+  const [pillActualH, setPillActualH] = useState(PILL_H);
+  useEffect(() => {
+    const el = pillWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      if (h > 0) setPillActualH(h);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // Smart panel positioning: prefer above, flip below if no room, shrink only if flip doesn't fit
   const containerH = containerRef.current?.clientHeight ?? window.innerHeight;
@@ -416,7 +431,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
   let flipped = false;
   if (isPanelOpen) {
     const spaceAbove = floating.y;
-    const spaceBelow = containerH - floating.y - PILL_H;
+    const spaceBelow = containerH - floating.y - pillActualH;
     if (spaceAbove >= height) {
       // Full panel fits above
       panelH = height;
@@ -433,7 +448,12 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
       panelH = Math.max(MIN_PANEL_H, spaceAbove);
     }
   }
-  const visualTop = flipped ? floating.y : floating.y - panelH;
+  // Push the entire unit up if the pill's bottom would overflow the container
+  let visualTop = flipped ? floating.y : floating.y - panelH;
+  const pillBottom = floating.y + pillActualH + BOUND_PAD;
+  if (pillBottom > containerH) {
+    visualTop -= (pillBottom - containerH);
+  }
 
   // ── Free-form drag ──
   const dragState = useRef<{
@@ -491,7 +511,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
       if (isPanelOpen) {
         const cH = container.clientHeight;
         const above = newY;
-        const below = cH - newY - PILL_H;
+        const below = cH - newY - pillActualH;
         if (above >= height) {
           pH = height;
         } else if (below >= height) {
@@ -505,10 +525,14 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
         }
       }
       // Use transform for drag offset — React controls left/top/width via style prop
-      const visualY = flip ? newY : newY - pH;
+      let visualY = flip ? newY : newY - pH;
+      // Push up if pill would overflow container bottom
+      const dragPillBottom = newY + pillActualH + BOUND_PAD;
+      if (dragPillBottom > container.clientHeight) {
+        visualY -= (dragPillBottom - container.clientHeight);
+      }
       const baseLeft = floating.x;
-      const baseTop = floating.y - (isPanelOpen && !flipped ? panelH : 0);
-      el.style.transform = `translate(${newX - baseLeft}px, ${visualY - baseTop}px)`;
+      el.style.transform = `translate(${newX - baseLeft}px, ${visualY - visualTop}px)`;
       // Update panel height and flip state visually during drag
       if (isPanelOpen) {
         const slot = el.querySelector(".pill-panel__slot") as HTMLElement | null;
@@ -556,7 +580,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [session.id, floating, isPanelOpen, height, containerRef, setPillPosition]);
+  }, [session.id, floating, isPanelOpen, height, pillActualH, visualTop, containerRef, setPillPosition]);
 
   // ── Horizontal resize ──
   const handleResizePointerDown = useCallback((side: "left" | "right") => (e: React.PointerEvent) => {
@@ -865,7 +889,7 @@ function FloatingPillUnit({ session, floating, isPanelOpen, containerRef, onCont
       )}
 
       {/* Pill — drag handle is the label zone */}
-      <div onPointerDown={handleDragPointerDown}>
+      <div ref={pillWrapperRef} onPointerDown={handleDragPointerDown}>
         <PillItem
           sessionId={session.id}
           sessionType={session.type}

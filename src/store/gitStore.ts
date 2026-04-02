@@ -16,6 +16,20 @@ export interface GitStatus {
   is_repo: boolean;
   has_upstream: boolean;
   has_remote: boolean;
+  repo_state: string; // "clean" | "merge" | "rebase" | "other"
+}
+
+export interface PullResult {
+  status: string; // "up_to_date" | "fast_forward" | "merged" | "conflicts"
+  conflicts: string[];
+  merge_commit: string | null;
+  stash_conflicts: boolean;
+}
+
+export interface MergeState {
+  is_merging: boolean;
+  conflicts: string[];
+  merge_message: string;
 }
 
 export interface GitHubCreatedRepo {
@@ -51,6 +65,8 @@ interface GitStore {
   branches: GitBranchInfo | null;
   log: GitLogEntry[];
   remoteInfo: GitRemoteInfo | null;
+  mergeState: MergeState | null;
+  error: string | null;
   selectedFile: string | null;
   diff: string;
   oldContent: string;
@@ -70,8 +86,8 @@ interface GitStore {
   fetch: (repoPath: string) => Promise<void>;
   push: (repoPath: string) => Promise<void>;
   publishBranch: (repoPath: string) => Promise<void>;
-  pull: (repoPath: string) => Promise<void>;
-  sync: (repoPath: string) => Promise<void>;
+  pull: (repoPath: string) => Promise<PullResult>;
+  sync: (repoPath: string) => Promise<PullResult | null>;
   fetchDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>;
   fetchLog: (repoPath: string) => Promise<void>;
   fetchBranches: (repoPath: string) => Promise<void>;
@@ -79,6 +95,11 @@ interface GitStore {
   addRemote: (repoPath: string, name: string, url: string) => Promise<void>;
   createGitHubRepo: (name: string, isPrivate: boolean, description?: string) => Promise<GitHubCreatedRepo>;
   publishToGitHub: (repoPath: string, repoName: string, isPrivate: boolean, description?: string) => Promise<void>;
+  fetchMergeStatus: (repoPath: string) => Promise<void>;
+  abortMerge: (repoPath: string) => Promise<void>;
+  completeMerge: (repoPath: string, message: string) => Promise<string>;
+  setError: (error: string) => void;
+  clearError: () => void;
   selectFile: (path: string | null) => void;
   reset: () => void;
 }
@@ -89,6 +110,8 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   branches: null,
   log: [],
   remoteInfo: null,
+  mergeState: null,
+  error: null,
   selectedFile: null,
   diff: "",
   oldContent: "",
@@ -103,9 +126,20 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   refreshStatus: async (repoPath) => {
     try {
       const status = await invoke<GitStatus>("git_status", { path: repoPath });
+      const prevBranch = get().branches?.current;
       set({ status, isRepo: status.is_repo });
+      // Refresh branches if the branch changed externally (e.g. CLI checkout)
+      if (status.is_repo && prevBranch && prevBranch !== status.branch) {
+        get().fetchBranches(repoPath);
+      }
+      // Also refresh merge state if repo is in merge state
+      if (status.repo_state === "merge") {
+        await get().fetchMergeStatus(repoPath);
+      } else {
+        set({ mergeState: null });
+      }
     } catch {
-      set({ isRepo: false, status: null });
+      set({ isRepo: false, status: null, mergeState: null });
     }
   },
 
@@ -167,14 +201,21 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
   },
 
   pull: async (repoPath) => {
-    await invoke("git_pull", { repoPath });
+    const result = await invoke<PullResult>("git_pull", { repoPath });
     await get().refreshStatus(repoPath);
+    return result;
   },
 
   sync: async (repoPath) => {
-    await invoke("git_pull", { repoPath });
-    await invoke("git_push", { repoPath });
+    const pullResult = await invoke<PullResult>("git_pull", { repoPath });
     await get().refreshStatus(repoPath);
+    // Don't push if pull resulted in conflicts
+    if (pullResult.status === "conflicts") {
+      return pullResult;
+    }
+    await invoke("git_push", { repoPath, setUpstream: false });
+    await get().refreshStatus(repoPath);
+    return pullResult;
   },
 
   fetchDiff: async (repoPath, filePath, staged) => {
@@ -228,6 +269,29 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
     await get().publishBranch(repoPath);
   },
 
+  fetchMergeStatus: async (repoPath) => {
+    try {
+      const mergeState = await invoke<MergeState>("git_merge_status", { repoPath });
+      set({ mergeState: mergeState.is_merging ? mergeState : null });
+    } catch {
+      set({ mergeState: null });
+    }
+  },
+
+  abortMerge: async (repoPath) => {
+    await invoke("git_abort_merge", { repoPath });
+    await get().refreshStatus(repoPath);
+  },
+
+  completeMerge: async (repoPath, message) => {
+    const sha = await invoke<string>("git_complete_merge", { repoPath, message });
+    await get().refreshStatus(repoPath);
+    return sha;
+  },
+
+  setError: (error) => set({ error }),
+  clearError: () => set({ error: null }),
+
   selectFile: (path) => set({ selectedFile: path }),
 
   reset: () =>
@@ -237,6 +301,8 @@ export const useGitStore = create<GitStore>()(devtools((set, get) => ({
       branches: null,
       log: [],
       remoteInfo: null,
+      mergeState: null,
+      error: null,
       selectedFile: null,
       diff: "",
       oldContent: "",
