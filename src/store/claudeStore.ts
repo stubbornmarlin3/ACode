@@ -353,7 +353,8 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
 
             // Track plan mode transitions
             if (isPlanEnter) isInPlanMode = true;
-            if (isPlanExit) isInPlanMode = false;
+            // If plan-exit was already resolved by the user, clear plan mode
+            if (isPlanExit && resolvedIds.has(tu.id)) isInPlanMode = false;
 
             // CLI runs with bypassPermissions — only intercept questions & plan tools.
             if (!isAlwaysInteractive) continue;
@@ -395,6 +396,12 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
 
             // Skip if this tool use was already resolved (race condition or session resume)
             if (!resolvedIds.has(tu.id)) {
+              // Remove previous plan-exit cards when a new one arrives
+              if (category === "plan-exit") {
+                pendingInteractions = pendingInteractions.filter(
+                  (p) => p.category !== "plan-exit",
+                );
+              }
               pendingInteractions.push({
                 toolUseId: tu.id,
                 toolName: tu.name,
@@ -446,11 +453,19 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
           pendingInteractions = pendingInteractions
             .map((p) => {
               if (!resultMap.has(p.toolUseId)) return p;
-              // Question tools: mark as auto-resolved (keep visible with answer)
+              // Question tools: mark as auto-resolved (keep visible)
               if (p.category === "question") {
                 return { ...p, autoAnswer: resultMap.get(p.toolUseId) || "auto" };
               }
-              // Plan/edit/bash/generic: remove completely once resolved
+              // Plan-exit: only keep visible if it has a plan to show
+              if (p.category === "plan-exit" && p.plan) {
+                return { ...p, autoAnswer: resultMap.get(p.toolUseId) || "auto" };
+              }
+              // Plan-exit with no plan: clear plan mode immediately
+              if (p.category === "plan-exit") {
+                isInPlanMode = false;
+              }
+              // Plan-enter/edit/bash/generic: remove completely once resolved
               return null;
             })
             .filter((p): p is PendingInteraction => p !== null);
@@ -591,14 +606,18 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     const { projects } = get();
     const proj = projects[key];
     if (proj) {
-      set({
-        projects: setProj(projects, key, {
-          pendingInteractions: proj.pendingInteractions.filter(
-            (p) => p.toolUseId !== toolUseId,
-          ),
-          resolvedToolUseIds: [...proj.resolvedToolUseIds, toolUseId],
-        }),
-      });
+      // If resolving a plan-exit interaction, clear plan mode now
+      const interaction = proj.pendingInteractions.find((p) => p.toolUseId === toolUseId);
+      const updates: Partial<typeof proj> = {
+        pendingInteractions: proj.pendingInteractions.filter(
+          (p) => p.toolUseId !== toolUseId,
+        ),
+        resolvedToolUseIds: [...proj.resolvedToolUseIds, toolUseId],
+      };
+      if (interaction?.category === "plan-exit") {
+        updates.isInPlanMode = false;
+      }
+      set({ projects: setProj(projects, key, updates) });
     }
   },
 

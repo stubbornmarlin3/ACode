@@ -957,12 +957,9 @@ pub async fn git_pull(repo_path: String) -> Result<PullResult, String> {
             repo.set_head(&refname)
                 .map_err(|e| format!("Failed to set HEAD: {}", e))?;
 
-            let commit_obj = repo
-                .find_object(fetch_commit.id(), None)
-                .map_err(|e| format!("Failed to find commit object: {}", e))?;
             let mut checkout = git2::build::CheckoutBuilder::new();
-            checkout.safe();
-            repo.checkout_tree(&commit_obj, Some(&mut checkout))
+            checkout.force();
+            repo.checkout_head(Some(&mut checkout))
                 .map_err(|e| format!("Failed to checkout new head: {}", e))?;
 
             result.status = "fast_forward".to_string();
