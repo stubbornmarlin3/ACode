@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ struct PendingRequests {
 }
 
 /// State shared between axum handlers.
-struct McpAppState {
+pub(crate) struct McpAppState {
     app_handle: AppHandle,
     pending: Mutex<PendingRequests>,
 }
@@ -298,105 +298,6 @@ fn tool_definitions() -> Value {
                 "required": ["session_id"]
             }
         },
-        // ── Git (backend-direct, also exposed as frontend tools for UI refresh) ──
-        {
-            "name": "git_stage",
-            "description": "Stage files for commit.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "paths": { "type": "array", "items": { "type": "string" }, "description": "File paths to stage" }
-                },
-                "required": ["paths"]
-            }
-        },
-        {
-            "name": "git_unstage",
-            "description": "Unstage files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "paths": { "type": "array", "items": { "type": "string" }, "description": "File paths to unstage" }
-                },
-                "required": ["paths"]
-            }
-        },
-        {
-            "name": "git_commit",
-            "description": "Commit staged changes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "message": { "type": "string", "description": "Commit message" }
-                },
-                "required": ["message"]
-            }
-        },
-        {
-            "name": "git_status",
-            "description": "Get the current git status of the repository.",
-            "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "git_log",
-            "description": "Get recent commit history.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "count": { "type": "integer", "description": "Number of commits to return (default: 20)" }
-                }
-            }
-        },
-        {
-            "name": "git_branches",
-            "description": "List local and remote branches.",
-            "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "git_checkout",
-            "description": "Switch to a different branch.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "branch": { "type": "string", "description": "Branch name to checkout" }
-                },
-                "required": ["branch"]
-            }
-        },
-        {
-            "name": "git_create_branch",
-            "description": "Create a new branch.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "New branch name" },
-                    "base": { "type": "string", "description": "Base ref (default: HEAD)" }
-                },
-                "required": ["name"]
-            }
-        },
-        {
-            "name": "git_push",
-            "description": "Push current branch to remote.",
-            "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "git_pull",
-            "description": "Pull from remote.",
-            "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "git_diff_file",
-            "description": "Get the diff for a specific file.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "File path" },
-                    "staged": { "type": "boolean", "description": "Show staged diff" }
-                },
-                "required": ["path"]
-            }
-        },
         // ── Claude pills ──
         {
             "name": "create_claude_pill",
@@ -574,7 +475,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "open_project",
-            "description": "Open a new project folder (adds it and switches to it).",
+            "description": "Opens a project folder to the sidebar. Does NOT switch to it. Do not follow up with switch_project unless the user explicitly asks to switch.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

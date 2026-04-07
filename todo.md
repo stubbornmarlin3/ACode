@@ -35,6 +35,7 @@
 - [x] Move the pill bars to bottom of page (output boxes are above pillbars, and code editor above that)
 - [x] Move the + button and projects to the bottom of the rail growing from the bottom up (flipping the UI)
 - [x] Show no pills by default
+- [ ] Docking collapsed pills doesn't work (need to expand first then dock — should handle all edge cases: dock-while-collapsed, drag collapsed to dock zone, etc.)
 - [ ] Allow for splitting tabs out of code editor into multiple panes (similar to pillbar panels)
 - [ ] Show hints for dropping code editor tabs and pillbars as well
 - [x] Save open files & layout in session storage
@@ -63,6 +64,7 @@
 - [ ] Shows 2 white bars on terminal load that disapear when clicking inside output panel
 
 # Claude
+- [ ] Sending a prompt when Claude is first opened doesn't work (first message after opening is dropped/ignored)
 - [x] Interruptions cause conversation loss
 - [x] Add interactive elements in output panel for certain things (like if questions are asked that need answered, plan mode/normal mode, approving edits and leaving plan mode)
 - [x] Context tracking is way off (will show I am at 15000k/1000k of tokens)

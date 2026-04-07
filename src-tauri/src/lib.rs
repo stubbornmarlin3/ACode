@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod git;
 mod ide_mcp;
 mod mcp;
@@ -194,6 +196,10 @@ fn read_dir_recursive(dir: &Path, depth: u32, max_depth: u32) -> Vec<FileEntry> 
 
     for item in items {
         let name = item.file_name().to_string_lossy().to_string();
+
+        if name == ".acode" {
+            continue;
+        }
 
         let path = item.path();
         let is_dir = path.is_dir();

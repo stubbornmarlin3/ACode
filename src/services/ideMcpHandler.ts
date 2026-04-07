@@ -81,8 +81,12 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
     }
 
     case "show_text_editor": {
-      editor.setHexMode(args.path as string, false);
-      return { hexMode: false, path: args.path };
+      const p = args.path as string;
+      if (editor.hexModes[p]) editor.toggleHexMode(p);
+      if (editor.markdownModes[p] && editor.markdownModes[p] !== "off") {
+        editor.setMarkdownMode(p, "off");
+      }
+      return { hexMode: false, markdownPreview: false, path: p };
     }
 
     case "show_markdown_preview": {
@@ -257,93 +261,6 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
       return { closed: args.session_id };
     }
 
-    // ── Git (routed to frontend for UI refresh) ────────────────
-    case "git_stage": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.stageFiles(wsRoot, args.paths as string[]);
-      return { staged: args.paths };
-    }
-
-    case "git_unstage": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.unstageFiles(wsRoot, args.paths as string[]);
-      return { unstaged: args.paths };
-    }
-
-    case "git_commit": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      const sha = await git.commit(wsRoot, args.message as string);
-      return { committed: true, sha };
-    }
-
-    case "git_status": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.refreshStatus(wsRoot);
-      return git.status;
-    }
-
-    case "git_log": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.fetchLog(wsRoot);
-      const count = (args.count as number) || 20;
-      return { log: git.log.slice(0, count) };
-    }
-
-    case "git_branches": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.fetchBranches(wsRoot);
-      return git.branches;
-    }
-
-    case "git_checkout": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.checkoutBranch(wsRoot, args.branch as string);
-      return { checkedOut: args.branch };
-    }
-
-    case "git_create_branch": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.createBranch(
-        wsRoot,
-        args.name as string,
-        args.base as string | undefined,
-      );
-      return { created: args.name };
-    }
-
-    case "git_push": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.push(wsRoot);
-      return { pushed: true };
-    }
-
-    case "git_pull": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      const pullResult = await git.pull(wsRoot);
-      return pullResult;
-    }
-
-    case "git_diff_file": {
-      const wsRoot = editor.workspaceRoot;
-      if (!wsRoot) return { error: "No workspace open" };
-      await git.fetchDiff(
-        wsRoot,
-        args.path as string,
-        (args.staged as boolean) || false,
-      );
-      return { diff: git.diff, path: args.path };
-    }
-
     // ── Claude pills ───────────────────────────────────────────
     case "create_claude_pill": {
       const wsRoot = editor.workspaceRoot;
@@ -514,6 +431,7 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
         (p) => p.path === targetPath,
       );
       if (!target) return { error: "Project not found: " + targetPath };
+      useLayoutStore.getState().setActiveProject(target.id);
       await editor.setWorkspaceRoot(targetPath);
       return { switched: targetPath };
     }
@@ -536,7 +454,7 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
           },
         }));
       }
-      await editor.setWorkspaceRoot(path);
+      // Don't switch to the project — just add it to the list
       return { opened: path };
     }
 
@@ -559,6 +477,14 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
       const session = layout.pillBar.sessions.find((s) => s.id === sid);
       if (!session) return { error: "Pill not found: " + sid };
 
+      // Capture the pill's current visual state before the project switch
+      const wasExpanded = layout.pillBar.expandedPillIds.includes(sid);
+      const wasPanelOpen = layout.pillBar.openPanelIds.includes(sid);
+      const wasDocked = layout.pillBar.dockedSlots.includes(sid);
+      const floatingPos = layout.pillBar.floatingPositions[sid] ?? null;
+      const panelHeight = layout.pillBar.panelHeights[sid] ?? null;
+      const wasActive = layout.pillBar.activePillId === sid;
+
       // Update the pill's project path
       useLayoutStore.setState((s) => ({
         pillBar: {
@@ -570,6 +496,47 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
           ),
         },
       }));
+
+      // Switch to the target project so the pill appears stationary
+      // while the project behind it changes
+      const targetProject = useLayoutStore.getState().projects.projects.find(
+        (p) => p.path === targetPath,
+      );
+      if (targetProject) {
+        useLayoutStore.getState().setActiveProject(targetProject.id);
+      }
+      await editor.setWorkspaceRoot(targetPath);
+
+      // Re-apply the pill's visual state after the project switch
+      useLayoutStore.setState((s) => {
+        const pb = s.pillBar;
+        const expandedPillIds = wasExpanded && !pb.expandedPillIds.includes(sid)
+          ? [...pb.expandedPillIds, sid] : pb.expandedPillIds;
+        const openPanelIds = wasPanelOpen && !pb.openPanelIds.includes(sid)
+          ? [...pb.openPanelIds, sid] : pb.openPanelIds;
+        const dockedSlots = wasDocked && !pb.dockedSlots.includes(sid)
+          ? [...pb.dockedSlots, sid] : pb.dockedSlots;
+        const floatingPositions = floatingPos
+          ? { ...pb.floatingPositions, [sid]: floatingPos }
+          : pb.floatingPositions;
+        const panelHeights = panelHeight != null
+          ? { ...pb.panelHeights, [sid]: panelHeight }
+          : pb.panelHeights;
+        const activePillId = wasActive ? sid : pb.activePillId;
+
+        return {
+          pillBar: {
+            ...pb,
+            activePillId,
+            expandedPillIds,
+            openPanelIds,
+            dockedSlots,
+            floatingPositions,
+            panelHeights,
+          },
+        };
+      });
+
       return { transferred: sid, to: targetPath };
     }
 
@@ -625,12 +592,13 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
 // ── Initialization ─────────────────────────────────────────────────
 
 let unlisten: UnlistenFn | null = null;
+let generation = 0;
 
 /** Start listening for IDE MCP requests from the Rust backend. */
 export async function initIdeMcpHandler() {
-  if (unlisten) return; // Already initialized
+  const gen = ++generation;
 
-  unlisten = await listen<IdeMcpRequest>("ide-mcp-request", async (event) => {
+  const fn = await listen<IdeMcpRequest>("ide-mcp-request", async (event) => {
     const req = event.payload;
     try {
       const result = await dispatch(req);
@@ -640,10 +608,18 @@ export async function initIdeMcpHandler() {
       await respond(req.request_id, { error: message });
     }
   });
+
+  // A newer init or destroy happened while we were awaiting — discard this listener
+  if (gen !== generation) {
+    fn();
+    return;
+  }
+  unlisten = fn;
 }
 
 /** Stop listening (cleanup). */
 export function destroyIdeMcpHandler() {
+  generation++;
   if (unlisten) {
     unlisten();
     unlisten = null;
