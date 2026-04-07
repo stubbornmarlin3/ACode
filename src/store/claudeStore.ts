@@ -613,6 +613,11 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
           (p) => p.toolUseId !== toolUseId,
         ),
         resolvedToolUseIds: [...proj.resolvedToolUseIds, toolUseId],
+        // Show streaming/thinking state so the UI reflects that Claude is
+        // processing the tool result (approve/deny doesn't go through
+        // sendMessage, so isStreaming would otherwise stay false).
+        isStreaming: true,
+        lastOutputLine: "Thinking...",
       };
       if (interaction?.category === "plan-exit") {
         updates.isInPlanMode = false;
