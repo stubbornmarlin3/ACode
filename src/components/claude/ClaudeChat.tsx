@@ -16,7 +16,7 @@ import {
   AskQuestion,
 } from "../../store/claudeStore";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
-import { McpStatusPanel } from "./McpStatusPanel";
+import { McpStatusButton } from "./McpStatusPanel";
 import "./ClaudeChat.css";
 
 // ── Common Claude models ─────────────────────────────────────────────
@@ -583,10 +583,14 @@ const MessageBlock = React.memo(function MessageBlock({
 function QuestionBlock({
   q,
   onAnswer,
+  selectedAnswer,
 }: {
   q: AskQuestion;
   onAnswer: (answer: string) => void;
+  /** When provided, the block shows a selection highlight instead of submitting immediately (batch mode). */
+  selectedAnswer?: string;
 }) {
+  const isBatchMode = selectedAnswer !== undefined;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [customInput, setCustomInput] = useState("");
 
@@ -596,6 +600,9 @@ function QuestionBlock({
       if (next.has(label)) next.delete(label);
       else next.add(label);
       setSelected(next);
+    } else if (isBatchMode) {
+      // Batch mode: report selection up without submitting the whole interaction
+      onAnswer(label);
     } else {
       onAnswer(label);
     }
@@ -603,6 +610,13 @@ function QuestionBlock({
 
   const submitMulti = () => {
     if (selected.size > 0) onAnswer(Array.from(selected).join(", "));
+  };
+
+  // Determine which label is "active" — either multi-select set or single selection in batch mode
+  const isActive = (label: string) => {
+    if (q.multiSelect) return selected.has(label);
+    if (isBatchMode) return selectedAnswer === label;
+    return false;
   };
 
   return (
@@ -615,7 +629,7 @@ function QuestionBlock({
             <button
               key={opt.label}
               className={`claude-chat__interaction-option${
-                q.multiSelect && selected.has(opt.label) ? " claude-chat__interaction-option--selected" : ""
+                isActive(opt.label) ? " claude-chat__interaction-option--selected" : ""
               }`}
               onClick={() => handleOption(opt.label)}
               title={opt.description}
@@ -639,19 +653,56 @@ function QuestionBlock({
           className="claude-chat__interaction-input"
           placeholder="Or type a custom response..."
           value={customInput}
-          onChange={(e) => setCustomInput(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setCustomInput(val);
+            // In batch mode, custom text counts as this question's answer
+            if (isBatchMode) {
+              onAnswer(val.trim() || "");
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && customInput.trim()) onAnswer(customInput.trim());
           }}
         />
-        <button
-          className="claude-chat__interaction-send"
-          onClick={() => { if (customInput.trim()) onAnswer(customInput.trim()); }}
-          disabled={!customInput.trim()}
-        >
-          Send
-        </button>
       </div>
+    </div>
+  );
+}
+
+/** Multi-question card: collects all answers before submitting as a batch */
+function MultiQuestionCard({
+  questions,
+  onSubmit,
+}: {
+  questions: AskQuestion[];
+  onSubmit: (answers: Record<string, string>) => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const answeredCount = Object.values(answers).filter((v) => v).length;
+  const allAnswered = answeredCount === questions.length;
+
+  const setAnswer = (question: string, answer: string) => {
+    setAnswers((prev) => ({ ...prev, [question]: answer }));
+  };
+
+  return (
+    <div className="claude-chat__interaction claude-chat__interaction--question">
+      {questions.map((q, i) => (
+        <QuestionBlock
+          key={i}
+          q={q}
+          onAnswer={(answer) => setAnswer(q.question, answer)}
+          selectedAnswer={answers[q.question]}
+        />
+      ))}
+      <button
+        className="claude-chat__interaction-approve"
+        onClick={() => onSubmit(answers)}
+        disabled={!allAnswered}
+      >
+        Submit All ({answeredCount}/{questions.length})
+      </button>
     </div>
   );
 }
@@ -690,34 +741,44 @@ function InteractionCard({
 
   // ── AskUserQuestion — structured multi-question card ──
   if (interaction.category === "question" && interaction.questions) {
-    // Build response as JSON: { answers: { "question text": "selected label" } }
-    const handleAnswer = (questionText: string, answer: string) => {
-      // For single-question tools, send just the answer text
-      if (interaction.questions!.length === 1) {
-        handle(answer);
-      } else {
-        // For multi-question, send as JSON mapping
-        handle(JSON.stringify({ [questionText]: answer }));
-      }
-    };
+    const isSingle = interaction.questions.length === 1;
 
-    return (
-      <div className="claude-chat__interaction claude-chat__interaction--question">
-        {interaction.questions.map((q, i) => (
+    if (isSingle) {
+      // Single-question: submit immediately on answer
+      return (
+        <div className="claude-chat__interaction claude-chat__interaction--question">
           <QuestionBlock
-            key={i}
-            q={q}
-            onAnswer={(answer) => handleAnswer(q.question, answer)}
+            q={interaction.questions[0]}
+            onAnswer={(answer) => handle(answer)}
           />
-        ))}
-      </div>
+        </div>
+      );
+    }
+
+    // Multi-question: batch all answers and submit at once
+    return (
+      <MultiQuestionCard
+        questions={interaction.questions}
+        onSubmit={(answers) => handle(JSON.stringify(answers))}
+      />
     );
   }
 
   // ── ExitPlanMode — show the plan + implement / continue planning ──
-  // Don't show if already resolved (e.g. session resume replay)
-  if (interaction.category === "plan-exit" && isResolved) return null;
   if (interaction.category === "plan-exit") {
+    const handlePlan = (value: string) => {
+      // Always resolve properly so isInPlanMode gets cleared and card is removed
+      resolveInteraction(sessionKey, interaction.toolUseId, value);
+      // If it was already auto-answered, also send a correction message
+      if (isResolved) {
+        const msg = JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text: `Regarding the plan: ${value}` }] },
+        });
+        invoke("write_claude", { key: sessionKey, data: msg }).catch(() => {});
+      }
+    };
+
     return (
       <div className="claude-chat__interaction claude-chat__interaction--plan">
         <div className="claude-chat__interaction-header">
@@ -729,12 +790,23 @@ function InteractionCard({
           </div>
         )}
         <div className="claude-chat__interaction-actions">
-          <button className="claude-chat__interaction-approve" onClick={() => handle("approved")}>
+          <button className="claude-chat__interaction-approve" onClick={() => handlePlan("approved")}>
             Implement Plan
           </button>
-          <button className="claude-chat__interaction-deny" onClick={() => handle("denied")}>
+          <button className="claude-chat__interaction-deny" onClick={() => handlePlan("denied")}>
             Continue Planning
           </button>
+        </div>
+        <div className="claude-chat__interaction-custom">
+          <input
+            type="text"
+            className="claude-chat__interaction-input"
+            placeholder="Or type a correction..."
+            onKeyDown={(e) => {
+              const val = (e.target as HTMLInputElement).value.trim();
+              if (e.key === "Enter" && val) handlePlan(val);
+            }}
+          />
         </div>
       </div>
     );
@@ -803,34 +875,7 @@ export function ClaudeChat() {
 
   return (
     <div className="claude-chat">
-      {sessionInfo && (
-        <div className="claude-chat__status-bar">
-          <ModelSelector currentModel={sessionInfo.model} />
-          {isInPlanMode && (
-            <span className="claude-chat__plan-badge">Plan Mode</span>
-          )}
-          {sessionInfo.contextWindow > 0 && (
-            <span>
-              {sessionInfo.tokensUsed > 0
-                ? `${formatTokens(sessionInfo.tokensUsed)} / ${formatTokens(sessionInfo.contextWindow)}`
-                : `${formatTokens(sessionInfo.contextWindow)} context`}
-            </span>
-          )}
-          {(() => {
-            const mcpTools = sessionInfo.tools.filter((t) => t.startsWith("mcp__"));
-            if (mcpTools.length === 0) return null;
-            const serverNames = [...new Set(mcpTools.map((t) => t.split("__")[1]))];
-            return (
-              <span className="claude-chat__mcp-badge" title={serverNames.join(", ")}>
-                {mcpTools.length} MCP tool{mcpTools.length !== 1 ? "s" : ""}
-              </span>
-            );
-          })()}
-        </div>
-      )}
-
       <div className="claude-chat__scroll" ref={scrollRef}>
-        <McpStatusPanel />
 
         {isEmpty ? (
           <p className="claude-chat__empty">
@@ -845,7 +890,7 @@ export function ClaudeChat() {
             })}
 
             {/* Interactive permission cards (in interactive mode) */}
-            {pendingInteractions.length > 0 && (
+            {pendingInteractions.length > 0 && !isStreaming && (
               <div className="claude-chat__interactions">
                 {pendingInteractions.map((p) => (
                   <InteractionCard key={p.toolUseId} interaction={p} sessionKey={sessionKey!} />
@@ -934,6 +979,26 @@ export function ClaudeChat() {
           </div>
         )}
       </div>
+      {sessionInfo && (
+        <div className="claude-chat__status-bar">
+          <div className="claude-chat__status-left">
+            <ModelSelector currentModel={sessionInfo.model} />
+            <span className={`claude-chat__mode-badge ${isInPlanMode ? "claude-chat__mode-badge--plan" : "claude-chat__mode-badge--work"}`}>
+              {isInPlanMode ? "Plan Mode" : "Work Mode"}
+            </span>
+          </div>
+          <div className="claude-chat__status-right">
+            <McpStatusButton />
+            {sessionInfo.contextWindow > 0 && (
+              <span>
+                {sessionInfo.tokensUsed > 0
+                  ? `${formatTokens(sessionInfo.tokensUsed)} / ${formatTokens(sessionInfo.contextWindow)}`
+                  : `${formatTokens(sessionInfo.contextWindow)} context`}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

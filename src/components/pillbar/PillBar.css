@@ -452,8 +452,9 @@
   backdrop-filter: blur(12px);
 }
 
-/* Remove padding when terminal is inside — xterm handles its own */
-.pill-panel__content:has(.terminal-wrapper) {
+/* Remove padding when terminal or claude chat is inside — they handle their own */
+.pill-panel__content:has(.terminal-wrapper),
+.pill-panel__content:has(.claude-chat) {
   padding: 0;
   overflow: hidden;
 }

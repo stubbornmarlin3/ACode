@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, RefreshCw, Power, PowerOff } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { RefreshCw, Power, PowerOff } from "lucide-react";
 import { useClaudeStateForKey, useClaudeStore } from "../../store/claudeStore";
 import { usePillSessionId } from "../pillbar/PillSessionContext";
 import { useMcpStore, type McpServerConfig } from "../../store/mcpStore";
@@ -21,7 +21,6 @@ function useServerStatuses(): McpServerStatus[] {
   const projectServers = useMcpStore((s) => s.projectServers);
 
   return useMemo(() => {
-    // Build deduplicated server list (same logic as allServers())
     const map = new Map<string, McpServerConfig>();
     for (const s of claudeUserServers) map.set(s.id, s);
     for (const s of globalServers) map.set(s.id, s);
@@ -29,7 +28,6 @@ function useServerStatuses(): McpServerStatus[] {
     for (const s of projectServers) map.set(s.id, s);
     const allServers = Array.from(map.values());
 
-    // Parse connected MCP servers from tools list
     const mcpTools = sessionInfo?.tools.filter((t) => t.startsWith("mcp__")) ?? [];
     const connectedServers = new Map<string, string[]>();
     for (const tool of mcpTools) {
@@ -102,15 +100,27 @@ function ServerStatusItem({ status }: { status: McpServerStatus }) {
   );
 }
 
-export function McpStatusPanel() {
-  const [expanded, setExpanded] = useState(false);
+/** MCP button for the status bar — opens a dropdown panel */
+export function McpStatusButton() {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const sessionKey = usePillSessionId();
   const isSpawned = useClaudeStateForKey(sessionKey, (s) => s.isSpawned);
   const isStreaming = useClaudeStateForKey(sessionKey, (s) => s.isStreaming);
   const reconnect = useClaudeStore((s) => s.reconnect);
   const statuses = useServerStatuses();
 
-  // Don't show if no servers are configured
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
   if (statuses.length === 0) return null;
 
   const connectedCount = statuses.filter((s) => s.connected).length;
@@ -118,40 +128,47 @@ export function McpStatusPanel() {
   const totalTools = statuses.reduce((sum, s) => sum + s.toolCount, 0);
 
   return (
-    <div className="mcp-live">
-      <button className="mcp-live__header" onClick={() => setExpanded(!expanded)}>
-        <span className="mcp-live__chevron">
-          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-        <span className="mcp-live__title">MCP</span>
-        <span className="mcp-live__summary">
-          {isSpawned
-            ? `${connectedCount}/${enabledCount} connected · ${totalTools} tools`
-            : `${enabledCount} server${enabledCount !== 1 ? "s" : ""} configured`}
-        </span>
-        {isSpawned && (
-          <button
-            className="mcp-live__reconnect"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isStreaming) reconnect();
-            }}
-            disabled={isStreaming}
-            title="Reconnect all MCP servers"
-          >
-            <RefreshCw size={11} />
-          </button>
-        )}
+    <div className="mcp-live__wrapper" ref={dropdownRef}>
+      <button
+        className="claude-chat__mcp-badge"
+        onClick={() => setOpen(!open)}
+        title={`${connectedCount}/${enabledCount} MCP servers connected · ${totalTools} tools`}
+      >
+        {totalTools > 0
+          ? `${totalTools} MCP tool${totalTools !== 1 ? "s" : ""}`
+          : `MCP (${enabledCount})`}
       </button>
-
-      {expanded && (
-        <div className="mcp-live__body">
-          {statuses.map((status) => (
-            <ServerStatusItem key={status.config.id} status={status} />
-          ))}
-          {!isSpawned && (
-            <p className="mcp-live__hint">Servers will connect when Claude starts.</p>
-          )}
+      {open && (
+        <div className="mcp-live__dropdown">
+          <div className="mcp-live__dropdown-header">
+            <span className="mcp-live__title">MCP Servers</span>
+            <span className="mcp-live__summary">
+              {isSpawned
+                ? `${connectedCount}/${enabledCount} connected · ${totalTools} tools`
+                : `${enabledCount} server${enabledCount !== 1 ? "s" : ""} configured`}
+            </span>
+            {isSpawned && (
+              <button
+                className="mcp-live__reconnect"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!isStreaming) reconnect();
+                }}
+                disabled={isStreaming}
+                title="Reconnect all MCP servers"
+              >
+                <RefreshCw size={11} />
+              </button>
+            )}
+          </div>
+          <div className="mcp-live__body">
+            {statuses.map((status) => (
+              <ServerStatusItem key={status.config.id} status={status} />
+            ))}
+            {!isSpawned && (
+              <p className="mcp-live__hint">Servers will connect when Claude starts.</p>
+            )}
+          </div>
         </div>
       )}
     </div>
