@@ -90,6 +90,91 @@
 - [x] If file is edited while open (by a different process like claude) it does not show until close and reopen
 - [x] Need more language support (Language servers???)
 
+# Claude-IDE Deep Integration (MCP)
+
+Internal MCP HTTP server (axum) inside Tauri, auto-injected into Claude CLI. ~45 IDE control tools.
+
+```
+Claude CLI ──HTTP──▶ Axum MCP (127.0.0.1:{port}) ──▶ Tauri event ──▶ React handler
+```
+
+## Phase 1: MCP Server Infrastructure — DONE
+- [x] Add `axum`, `uuid` deps to `src-tauri/Cargo.toml`
+- [x] Create `src-tauri/src/ide_mcp.rs` — axum MCP server (initialize, tools/list, tools/call, oneshot bridge, 30s timeout)
+- [x] Wire into `src-tauri/src/lib.rs` — mod, setup, managed state, commands
+- [x] Update `src/store/mcpStore.ts` — auto-inject `acode-ide` in `writeClaudeConfigFile()`
+- [x] Create `src/services/ideMcpHandler.ts` — frontend event dispatcher (all tools routed)
+- [x] Initialize handler in `src/App.tsx`
+
+## Phase 2: Core Editor & Sidebar Tools — DONE (definitions + dispatch)
+- [x] `open_file`, `close_file`, `switch_tab`, `list_open_files`, `get_active_file`
+- [x] `show_hex_editor`, `show_text_editor`, `show_markdown_preview`
+- [x] `highlight_lines` (dispatches DOM event), `scroll_to_line` (dispatches DOM event)
+- [ ] Wire `highlight_lines` into CodeMirror (EditorPane listen for `ide-mcp-highlight`, apply decorations)
+- [ ] Wire `scroll_to_line` into CodeMirror (EditorPane listen for `ide-mcp-scroll`, scrollIntoView)
+- [x] `show_diff`, `switch_sidebar_tab`, `toggle_sidebar`
+- [x] `expand_folder`, `collapse_folder`, `reveal_in_explorer`, `refresh_explorer`
+
+## Phase 3: Terminal Tools — DONE (definitions + dispatch)
+- [x] `create_terminal`, `run_command`, `get_terminal_output`, `get_terminal_cwd`, `close_terminal`
+
+## Phase 4: Git Tools — DONE (definitions + dispatch via frontend stores)
+- [x] `git_stage`, `git_unstage`, `git_commit`, `git_status`, `git_diff_file`
+- [x] `git_log`, `git_branches`, `git_checkout`, `git_create_branch`, `git_push`, `git_pull`
+- [ ] Emit Tauri event after git ops so frontend auto-refreshes gitStore
+
+## Phase 5: Pill & Layout Management Tools — DONE (definitions + dispatch)
+- [x] `list_pills`, `create_pill`, `close_pill`, `focus_pill`, `expand_pill`, `collapse_pill`
+- [x] `dock_pill`, `float_pill`, `resize_pill`, `move_pill`
+
+## Phase 6: Project Management Tools — DONE (definitions + dispatch)
+- [x] `list_projects`, `get_active_project`, `switch_project`, `open_project`, `close_project`
+- [x] `transfer_pill` (basic: updates projectPath)
+- [ ] Enhanced pill transfer: kill/respawn terminal PTY in new CWD
+- [ ] Enhanced pill transfer: update Claude session key in claudeStore
+- [ ] Enhanced pill transfer: handle active key switching across projects
+
+## Phase 7: Claude Pill Tools (Meta) — DONE (definitions + dispatch)
+- [x] `create_claude_pill`, `send_prompt`, `close_claude_pill`, `get_claude_messages`
+- [ ] Add recursion guard: reject `send_prompt` targeting the calling session
+
+## Phase 8: Live Edit Visualization — NOT STARTED
+- [ ] Detect `Edit`/`Write`/`MultiEdit` tool_use in `claudeStore.processStreamChunk`
+- [ ] Add `pendingFileEdits` to `ClaudeProjectState`
+- [ ] On `tool_result`, trigger animated reload
+- [ ] Add `reloadFileAnimated(path, editInfo)` to editorStore
+- [ ] Create `src/components/editor/EditAnimation.ts` — CodeMirror ViewPlugin
+  - Green highlight on added lines, red flash on removed, fade out ~1.5s
+  - `Edit`: highlight changed region only; `Write`: flash then highlight diff
+
+## Phase 9: Notifications & State Query Tools — PARTIAL
+- [x] `show_notification`, `get_editor_state`
+- [ ] `get_settings` — read IDE settings
+- [ ] `update_setting` — change a setting
+
+## Verification
+- [ ] Smoke: `acode-ide` appears in Claude's MCP tools list
+- [ ] Ask Claude to "open src/App.tsx" — tab appears
+- [ ] Ask Claude to "run `ls` in a new terminal" — pill + command executes
+- [ ] Ask Claude to "dock terminal, float chat" — positions change
+- [ ] Ask Claude to "show diff for changed file" — diff viewer opens
+- [ ] Ask Claude to edit a file — highlight animation appears (Phase 8)
+- [ ] Ask Claude to "switch to project X" — switches with session preservation
+- [ ] Ask Claude to "move terminal to other project" — pill transfers
+
+## Files Created/Modified
+| File | Status |
+|------|--------|
+| `src-tauri/Cargo.toml` | Modified — added axum, uuid |
+| `src-tauri/src/ide_mcp.rs` | **Created** — MCP server (~580 lines) |
+| `src-tauri/src/lib.rs` | Modified — mod, setup, commands |
+| `src/store/mcpStore.ts` | Modified — auto-inject acode-ide |
+| `src/services/ideMcpHandler.ts` | **Created** — frontend dispatcher (~420 lines) |
+| `src/App.tsx` | Modified — init handler |
+| `src/store/claudeStore.ts` | Pending — Phase 8 |
+| `src/store/editorStore.ts` | Pending — Phase 8 |
+| `src/components/editor/EditAnimation.ts` | Pending — Phase 8 |
+
 # Future / Nice-to-Have
 - [ ] Consider Tauri isolation pattern for IPC security (sandboxed iframe intercepts all IPC with AES-GCM encryption)
 - [ ] Add cargo-audit to CI for Rust dependency security auditing

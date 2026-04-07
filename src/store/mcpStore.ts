@@ -173,11 +173,20 @@ function fileToConfigs(file: McpFile, scope: McpScope): McpServerConfig[] {
  * Claude CLI already loads its own settings.json and .mcp.json — we only need to pass
  * the ACode-managed servers via --mcp-config.
  */
-function buildClaudeConfig(servers: McpServerConfig[]): string {
+function buildClaudeConfig(servers: McpServerConfig[], ideMcpPort = 0): string {
   const acodeEnabled = servers.filter(
     (s) => s.enabled && (s.scope === "global" || s.scope === "project")
   );
   const mcpServers: Record<string, Omit<McpFileEntry, "_name" | "_enabled">> = {};
+
+  // Inject the internal IDE MCP server so Claude can control ACode
+  if (ideMcpPort > 0) {
+    mcpServers["acode-ide"] = {
+      type: "http",
+      url: `http://127.0.0.1:${ideMcpPort}/mcp`,
+    };
+  }
+
   for (const cfg of acodeEnabled) {
     if (cfg.transport.type === "stdio") {
       mcpServers[cfg.id] = {
@@ -501,15 +510,25 @@ export const useMcpStore = create<McpStore>()(devtools((set, get) => ({
 
   writeClaudeConfigFile: async () => {
     const servers = get().allServers();
-    // Only write ACode-managed servers — Claude CLI auto-loads its own settings.json and .mcp.json
+
+    // Fetch the IDE MCP server port (0 means server failed to start)
+    let ideMcpPort = 0;
+    try {
+      ideMcpPort = await invoke<number>("get_ide_mcp_port");
+    } catch {
+      // IDE MCP server not ready yet — skip injection
+    }
+
     const acodeEnabled = servers.filter(
       (s) => s.enabled && (s.scope === "global" || s.scope === "project")
     );
-    if (acodeEnabled.length === 0) return null;
+
+    // Always write config if we have the IDE MCP server or ACode-managed servers
+    if (acodeEnabled.length === 0 && ideMcpPort === 0) return null;
 
     const configDir = await invoke<string>("get_config_dir");
     const configPath = configDir.replace(/\\/g, "/") + "/_mcp-active.json";
-    const content = buildClaudeConfig(servers);
+    const content = buildClaudeConfig(servers, ideMcpPort);
     await invoke("save_file", { path: configPath, content });
     return configPath;
   },

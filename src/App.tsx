@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 import { RootLayout } from "./components/layout/RootLayout";
 import { useGitHubStore } from "./store/githubStore";
+import { initIdeMcpHandler, destroyIdeMcpHandler } from "./services/ideMcpHandler";
 
 export default function App() {
   // Block the default browser context menu globally
@@ -32,6 +33,12 @@ export default function App() {
   // Check GitHub auth on startup so token is recognized before panel opens
   useEffect(() => {
     useGitHubStore.getState().checkAuth();
+  }, []);
+
+  // Initialize the IDE MCP handler so Claude can control the IDE
+  useEffect(() => {
+    initIdeMcpHandler();
+    return () => destroyIdeMcpHandler();
   }, []);
 
   return <RootLayout />;
