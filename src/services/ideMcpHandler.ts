@@ -425,17 +425,6 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
       return { id: project.id, name: project.name, path: project.path };
     }
 
-    case "switch_project": {
-      const targetPath = args.path as string;
-      const target = layout.projects.projects.find(
-        (p) => p.path === targetPath,
-      );
-      if (!target) return { error: "Project not found: " + targetPath };
-      useLayoutStore.getState().setActiveProject(target.id);
-      await editor.setWorkspaceRoot(targetPath);
-      return { switched: targetPath };
-    }
-
     case "open_project": {
       const path = args.path as string;
       // Add project if not already in list
@@ -536,6 +525,38 @@ async function dispatch(req: IdeMcpRequest): Promise<unknown> {
           },
         };
       });
+
+      // ── Post-transfer: update session keys and terminal CWD ──
+
+      // Switch the appropriate store's active key to this pill
+      if (session.type === "terminal") {
+        useTerminalStore.getState().setActiveKey(sid);
+      } else if (session.type === "claude") {
+        useClaudeStore.getState().setActiveKey(sid);
+      }
+
+      // For terminal pills: gracefully cd to the new project path
+      if (session.type === "terminal") {
+        const termState = useTerminalStore.getState().projects[sid];
+        if (termState?.isSpawned) {
+          const cdCmd = `cd ${JSON.stringify(targetPath)}\n`;
+          const sendCd = () => invoke("write_terminal", { key: sid, data: cdCmd });
+
+          if (termState.commandPhase === "idle") {
+            // No command running — cd immediately
+            sendCd();
+          } else {
+            // Command in progress — wait for it to finish, then cd
+            const unsub = useTerminalStore.subscribe((state) => {
+              const proj = state.projects[sid];
+              if (proj && (proj.commandPhase === "idle" || proj.commandPhase === "done")) {
+                unsub();
+                sendCd();
+              }
+            });
+          }
+        }
+      }
 
       return { transferred: sid, to: targetPath };
     }

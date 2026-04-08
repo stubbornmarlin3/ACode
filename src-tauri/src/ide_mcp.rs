@@ -463,19 +463,8 @@ fn tool_definitions() -> Value {
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
-            "name": "switch_project",
-            "description": "Switch to a different open project.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Project path to switch to" }
-                },
-                "required": ["path"]
-            }
-        },
-        {
             "name": "open_project",
-            "description": "Opens a project folder to the sidebar. Does NOT switch to it. Do not follow up with switch_project unless the user explicitly asks to switch.",
+            "description": "Opens a project folder to the sidebar. Does NOT switch to it — use transfer_pill to move yourself to a different project.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

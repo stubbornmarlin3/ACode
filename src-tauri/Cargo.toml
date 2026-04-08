@@ -1,6 +1,6 @@
 [package]
 name = "acode"
-version = "1.9.0"
+version = "1.10.0"
 description = "Aidan's Custom IDE"
 authors = ["arcar"]
 edition = "2021"

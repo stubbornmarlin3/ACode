@@ -112,8 +112,8 @@ Claude CLI ──HTTP──▶ Axum MCP (127.0.0.1:{port}) ──▶ Tauri event
 - [x] `open_file`, `close_file`, `switch_tab`, `list_open_files`, `get_active_file`
 - [x] `show_hex_editor`, `show_text_editor`, `show_markdown_preview`
 - [x] `highlight_lines` (dispatches DOM event), `scroll_to_line` (dispatches DOM event)
-- [ ] Wire `highlight_lines` into CodeMirror (EditorPane listen for `ide-mcp-highlight`, apply decorations)
-- [ ] Wire `scroll_to_line` into CodeMirror (EditorPane listen for `ide-mcp-scroll`, scrollIntoView)
+- [x] Wire `highlight_lines` into CodeMirror (EditorPane listen for `ide-mcp-highlight`, apply decorations)
+- [x] Wire `scroll_to_line` into CodeMirror (EditorPane listen for `ide-mcp-scroll`, scrollIntoView)
 - [x] `show_diff`, `switch_sidebar_tab`, `toggle_sidebar`
 - [x] `expand_folder`, `collapse_folder`, `reveal_in_explorer`, `refresh_explorer`
 
@@ -132,20 +132,20 @@ Claude CLI ──HTTP──▶ Axum MCP (127.0.0.1:{port}) ──▶ Tauri event
 ## Phase 6: Project Management Tools — DONE (definitions + dispatch)
 - [x] `list_projects`, `get_active_project`, `switch_project`, `open_project`, `close_project`
 - [x] `transfer_pill` (basic: updates projectPath)
-- [ ] Enhanced pill transfer: kill/respawn terminal PTY in new CWD
-- [ ] Enhanced pill transfer: update Claude session key in claudeStore
-- [ ] Enhanced pill transfer: handle active key switching across projects
+- [x] Enhanced pill transfer: graceful terminal CWD change (waits for running command, then `cd`)
+- [x] Enhanced pill transfer: update Claude session key in claudeStore
+- [x] Enhanced pill transfer: handle active key switching across projects
 
 ## Phase 7: Claude Pill Tools (Meta) — DONE (definitions + dispatch)
 - [x] `create_claude_pill`, `send_prompt`, `close_claude_pill`, `get_claude_messages`
 - [ ] Add recursion guard: reject `send_prompt` targeting the calling session
 
-## Phase 8: Live Edit Visualization — NOT STARTED
-- [ ] Detect `Edit`/`Write`/`MultiEdit` tool_use in `claudeStore.processStreamChunk`
-- [ ] Add `pendingFileEdits` to `ClaudeProjectState`
-- [ ] On `tool_result`, trigger animated reload
-- [ ] Add `reloadFileAnimated(path, editInfo)` to editorStore
-- [ ] Create `src/components/editor/EditAnimation.ts` — CodeMirror ViewPlugin
+## Phase 8: Live Edit Visualization — DONE
+- [x] Detect `Edit`/`Write`/`MultiEdit` tool_use in `claudeStore.processStreamChunk`
+- [x] Add `pendingFileEdits` to `ClaudeProjectState`
+- [x] On `tool_result`, trigger animated reload
+- [x] Add `reloadFileAnimated(path, editInfo)` to editorStore
+- [x] Create `src/components/editor/EditAnimation.ts` — CodeMirror ViewPlugin
   - Green highlight on added lines, red flash on removed, fade out ~1.5s
   - `Edit`: highlight changed region only; `Write`: flash then highlight diff
 
@@ -173,12 +173,13 @@ Claude CLI ──HTTP──▶ Axum MCP (127.0.0.1:{port}) ──▶ Tauri event
 | `src/store/mcpStore.ts` | Modified — auto-inject acode-ide |
 | `src/services/ideMcpHandler.ts` | **Created** — frontend dispatcher (~420 lines) |
 | `src/App.tsx` | Modified — init handler |
-| `src/store/claudeStore.ts` | Pending — Phase 8 |
-| `src/store/editorStore.ts` | Pending — Phase 8 |
-| `src/components/editor/EditAnimation.ts` | Pending — Phase 8 |
+| `src/store/claudeStore.ts` | Modified — Phase 8 (pendingFileEdits, Edit/Write detection) |
+| `src/store/editorStore.ts` | Modified — Phase 8 (reloadFileAnimated) |
+| `src/components/editor/EditAnimation.ts` | **Created** — Phase 8 (CodeMirror animation extension) |
+| `src/components/editor/EditorPane.tsx` | Modified — Phase 8 (animation wiring) |
 
 # Future / Nice-to-Have
 - [ ] Consider Tauri isolation pattern for IPC security (sandboxed iframe intercepts all IPC with AES-GCM encryption)
 - [ ] Add cargo-audit to CI for Rust dependency security auditing
 - [ ] Reduce tokio features from "full" to only what's needed (grants unnecessary functionality)
-- [ ] Use session IDs based on UUID instead of incrementing counter (collision risk on store recreation)
+- [x] Use session IDs based on UUID instead of incrementing counter (collision risk on store recreation)
