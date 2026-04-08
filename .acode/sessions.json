@@ -2,27 +2,31 @@
   "sessions": [
     {
       "type": "claude",
-      "panelHeight": 682,
+      "panelHeight": 966,
       "expanded": true,
       "panelOpen": true,
       "floating": {
-        "x": 1978,
-        "y": 1125,
+        "x": 1450,
+        "y": 1066,
         "width": 892
-      }
+      },
+      "preDockWidth": 1391
     },
     {
       "type": "terminal",
+      "panelHeight": 410,
       "expanded": true,
       "panelOpen": true,
       "floating": {
-        "x": 1305,
-        "y": 413,
-        "width": 600
+        "x": 2405,
+        "y": 501,
+        "width": 673
       }
     }
   ],
   "activeIndex": 0,
-  "openFiles": [],
-  "activeFilePath": null
+  "openFiles": [
+    "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
+  ],
+  "activeFilePath": "C:\\Users\\arcar\\OneDrive\\Documents\\Development\\ACode\\todo.md"
 }

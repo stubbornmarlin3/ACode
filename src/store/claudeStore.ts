@@ -78,6 +78,18 @@ const PLAN_ENTER_TOOLS = new Set([
 ]);
 
 
+/** A file edit that Claude is executing — tracked so the editor can animate the change */
+export interface PendingFileEdit {
+  toolUseId: string;
+  toolName: string;
+  filePath: string;
+  /** For Edit tools: the old and new strings */
+  oldString?: string;
+  newString?: string;
+  /** For Write tools: full file content (diff computed on reload) */
+  isWrite?: boolean;
+}
+
 /** State for a single project's Claude session */
 export interface ClaudeProjectState {
   messages: ChatMessage[];
@@ -105,6 +117,8 @@ export interface ClaudeProjectState {
   generation: number;
   /** Timestamp (ms) of last received stream output — used for stale detection */
   lastActivityAt: number;
+  /** File edits in flight — keyed by tool_use ID, consumed on tool_result */
+  pendingFileEdits: PendingFileEdit[];
 }
 
 const EMPTY_PROJECT: ClaudeProjectState = {
@@ -126,7 +140,20 @@ const EMPTY_PROJECT: ClaudeProjectState = {
   isInPlanMode: false,
   generation: -1,
   lastActivityAt: 0,
+  pendingFileEdits: [],
 };
+
+/** Check if a tool name is an Edit-family tool */
+function isEditToolName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n === "edit" || n === "editfile" || n === "edit_file" || n === "multiedit" || n === "multi_edit";
+}
+
+/** Check if a tool name is a Write-family tool */
+function isWriteToolName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n === "write" || n === "writefile" || n === "write_file";
+}
 
 interface ClaudeStore {
   /** Currently active project key (workspace path) */
@@ -241,6 +268,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     let pendingInteractions = [...proj.pendingInteractions];
     const resolvedIds = new Set(proj.resolvedToolUseIds);
     let isInPlanMode = proj.isInPlanMode;
+    let pendingFileEdits = [...proj.pendingFileEdits];
     // Always bypass CLI permissions; only intercept questions & plan approval
 
     for (const event of parsed) {
@@ -337,6 +365,26 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
           }
         }
 
+        // Track file-editing tools so the editor can animate the changes on completion.
+        for (const tu of toolUses) {
+          if (isEditToolName(tu.name) && tu.input.file_path) {
+            pendingFileEdits.push({
+              toolUseId: tu.id,
+              toolName: tu.name,
+              filePath: tu.input.file_path as string,
+              oldString: tu.input.old_string as string | undefined,
+              newString: tu.input.new_string as string | undefined,
+            });
+          } else if (isWriteToolName(tu.name) && tu.input.file_path) {
+            pendingFileEdits.push({
+              toolUseId: tu.id,
+              toolName: tu.name,
+              filePath: tu.input.file_path as string,
+              isWrite: true,
+            });
+          }
+        }
+
         // Detect tool uses that need user interaction (questions & plan approval).
         if (toolUses.length > 0) {
           for (const tu of toolUses) {
@@ -396,11 +444,28 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
 
             // Skip if this tool use was already resolved (race condition or session resume)
             if (!resolvedIds.has(tu.id)) {
-              // Remove previous plan-exit cards when a new one arrives
-              if (category === "plan-exit") {
-                pendingInteractions = pendingInteractions.filter(
-                  (p) => p.category !== "plan-exit",
+              // Remove previous cards of the same category when a new one arrives
+              // (e.g. multiple questions should show only the latest)
+              if (category === "plan-exit" || category === "question") {
+                const displaced = pendingInteractions.filter(
+                  (p) => p.category === category,
                 );
+                pendingInteractions = pendingInteractions.filter(
+                  (p) => p.category !== category,
+                );
+                // Auto-resolve displaced question cards so Claude doesn't
+                // hang waiting for tool_results that will never come.
+                for (const d of displaced) {
+                  if (d.category === "question") {
+                    resolvedIds.add(d.toolUseId);
+                    const msg = JSON.stringify({
+                      type: "tool_result",
+                      tool_use_id: d.toolUseId,
+                      content: "(Question superseded by a newer question)",
+                    });
+                    invoke("write_claude", { key, data: msg });
+                  }
+                }
               }
               pendingInteractions.push({
                 toolUseId: tu.id,
@@ -447,6 +512,19 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
             ];
           }
           activeToolUse = null;
+
+          // Trigger animated reload for completed file edits
+          const resultIds = new Set(toolResults.map((r) => r.toolUseId));
+          const completedEdits = pendingFileEdits.filter((e) => resultIds.has(e.toolUseId));
+          pendingFileEdits = pendingFileEdits.filter((e) => !resultIds.has(e.toolUseId));
+          if (completedEdits.length > 0) {
+            // Fire async — don't block stream processing
+            import("./editorStore").then(({ useEditorStore }) => {
+              for (const edit of completedEdits) {
+                useEditorStore.getState().reloadFileAnimated(edit);
+              }
+            });
+          }
 
           // Handle resolved pending interactions
           const resultMap = new Map(toolResults.map((r) => [r.toolUseId, r.content]));
@@ -509,12 +587,15 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
     // Re-read current resolved IDs to catch any that were resolved concurrently
     // (e.g. resolveInteraction called while this chunk was being processed)
     const currentResolved = new Set(getProj(get().projects, key).resolvedToolUseIds);
+    // Merge in any IDs auto-resolved during this chunk (e.g. displaced questions)
+    for (const id of resolvedIds) currentResolved.add(id);
     const finalPendingInteractions = pendingInteractions.filter(
       (p) => !currentResolved.has(p.toolUseId)
     );
 
     set({
       projects: setProj(get().projects, key, {
+        resolvedToolUseIds: [...currentResolved],
         messages,
         sessionInfo,
         totalCostUsd,
@@ -528,6 +609,7 @@ export const useClaudeStore = create<ClaudeStore>()(devtools((set, get) => ({
         lastSessionId,
         pendingInteractions: finalPendingInteractions,
         isInPlanMode,
+        pendingFileEdits,
         lastActivityAt: Date.now(),
       }),
     });

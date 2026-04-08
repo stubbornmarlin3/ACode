@@ -210,6 +210,8 @@ interface EditorStore {
   cycleMarkdownMode: (path: string) => void;
   setHexMode: (path: string, hex: boolean) => void;
   toggleHexMode: (path: string) => void;
+  /** Reload a file from disk and dispatch an edit animation to the active CodeMirror view */
+  reloadFileAnimated: (edit: import("./claudeStore").PendingFileEdit) => Promise<void>;
 }
 
 /** Max number of project states to keep cached in memory. */
@@ -816,6 +818,35 @@ export const useEditorStore = create<EditorStore>()(devtools((set, get) => ({
     }
 
     set((st) => ({ hexModes: { ...st.hexModes, [path]: !wasHex } }));
+  },
+
+  reloadFileAnimated: async (edit) => {
+    const state = get();
+    const file = state.openFiles.find((f) => f.path === edit.filePath);
+    const contentBefore = file?.content ?? null;
+
+    // Skip animation if file is in hex mode (no CodeMirror view visible)
+    const isHex = !!state.hexModes[edit.filePath];
+
+    // If in markdown preview, switch to editor so the user sees the edit
+    if (state.markdownModes[edit.filePath] === "preview") {
+      get().setMarkdownMode(edit.filePath, "off");
+    }
+
+    // Reload the file from disk (updates store content, triggers EditorPane sync)
+    await get().reloadFileFromDisk(edit.filePath);
+
+    if (isHex) return;
+
+    const fileAfter = get().openFiles.find((f) => f.path === edit.filePath);
+    const contentAfter = fileAfter?.content ?? null;
+
+    // Emit a DOM event so EditorPane can compute ranges and trigger the animation
+    window.dispatchEvent(
+      new CustomEvent("acode-edit-animation", {
+        detail: { edit, contentBefore, contentAfter },
+      }),
+    );
   },
 }), { name: "editorStore", enabled: import.meta.env.DEV }));
 

@@ -24,6 +24,13 @@ import { useGitStore } from "../../store/gitStore";
 import { persistCurrentSessions } from "../../store/editorStore";
 import { ClaudeIcon } from "../icons/ClaudeIcon";
 import { ContextMenu, useContextMenu, type MenuEntry } from "../contextmenu/ContextMenu";
+import {
+  editAnimationExtension,
+  triggerEditAnimation,
+  setLineHighlight,
+  type EditAnimationRange,
+} from "./EditAnimation";
+import type { PendingFileEdit } from "../../store/claudeStore";
 import "./EditorPane.css";
 
 /** Shared ref so sibling components (e.g. MarkdownPreview) can access the EditorView */
@@ -203,6 +210,7 @@ export function EditorPane() {
             ),
             indentCompartment.current.of(indentUnit.of(" ".repeat(settings.tabSize))),
             wrapCompartment.current.of(settings.lineWrapping ? EditorView.lineWrapping : []),
+            editAnimationExtension(),
             listenerCompartment.current.of(
               EditorView.updateListener.of((update) => {
                 if (update.docChanged && !isSyncingExternalRef.current) {
@@ -301,6 +309,94 @@ export function EditorPane() {
     }
     prevMdModeRef.current = mdMode;
   }, [mdMode]);
+
+  // Listen for animated edit events from claudeStore → editorStore pipeline
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { edit, contentBefore, contentAfter } = (e as CustomEvent<{
+        edit: PendingFileEdit;
+        contentBefore: string | null;
+        contentAfter: string | null;
+      }>).detail;
+      if (!viewRef.current || activeFilePathRef.current !== edit.filePath) return;
+      if (!contentBefore || !contentAfter || contentAfter === contentBefore) return;
+
+      const ranges: EditAnimationRange[] = [];
+
+      if (!edit.isWrite && edit.oldString != null && edit.newString != null) {
+        // Edit tool — find the replaced region in the new content
+        const idx = contentAfter.indexOf(edit.newString);
+        if (idx >= 0) {
+          ranges.push({ kind: "add", from: idx, to: idx + edit.newString.length });
+        }
+      } else {
+        // Write tool or fallback — diff old vs new using prefix/suffix matching
+        const minLen = Math.min(contentBefore.length, contentAfter.length);
+        let prefixLen = 0;
+        while (prefixLen < minLen && contentBefore[prefixLen] === contentAfter[prefixLen]) prefixLen++;
+        let suffixLen = 0;
+        const maxSuffix = minLen - prefixLen;
+        while (suffixLen < maxSuffix && contentBefore[contentBefore.length - 1 - suffixLen] === contentAfter[contentAfter.length - 1 - suffixLen]) suffixLen++;
+
+        const removedLen = contentBefore.length - prefixLen - suffixLen;
+        const insertedLen = contentAfter.length - prefixLen - suffixLen;
+
+        if (removedLen > 0) {
+          const delPoint = Math.min(prefixLen, contentAfter.length - 1);
+          if (delPoint >= 0) {
+            ranges.push({ kind: "remove", from: delPoint, to: Math.min(delPoint + 1, contentAfter.length) });
+          }
+        }
+        if (insertedLen > 0) {
+          ranges.push({ kind: "add", from: prefixLen, to: prefixLen + insertedLen });
+        }
+      }
+
+      if (ranges.length > 0) {
+        // Delay until after the React content-sync effect updates CodeMirror
+        const dispatchAnim = () => {
+          if (viewRef.current) {
+            viewRef.current.dispatch({ effects: triggerEditAnimation.of(ranges) });
+          }
+        };
+        // Two rAF ticks: first lets React commit, second lets CM sync
+        requestAnimationFrame(() => requestAnimationFrame(dispatchAnim));
+      }
+    };
+
+    window.addEventListener("acode-edit-animation", handler);
+    return () => window.removeEventListener("acode-edit-animation", handler);
+  }, []);
+
+  // Listen for MCP highlight_lines events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { path, startLine, endLine } = (e as CustomEvent<{ path: string; startLine: number; endLine: number }>).detail;
+      const view = viewRef.current;
+      if (!view || activeFilePathRef.current !== path) return;
+      view.dispatch({ effects: setLineHighlight.of({ startLine, endLine }) });
+      // Also scroll to the start of the highlighted range
+      const doc = view.state.doc;
+      const line = doc.line(Math.max(1, Math.min(startLine, doc.lines)));
+      view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
+    };
+    window.addEventListener("ide-mcp-highlight", handler);
+    return () => window.removeEventListener("ide-mcp-highlight", handler);
+  }, []);
+
+  // Listen for MCP scroll_to_line events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { path, line } = (e as CustomEvent<{ path: string; line: number }>).detail;
+      const view = viewRef.current;
+      if (!view || activeFilePathRef.current !== path) return;
+      const doc = view.state.doc;
+      const lineObj = doc.line(Math.max(1, Math.min(line, doc.lines)));
+      view.dispatch({ effects: EditorView.scrollIntoView(lineObj.from, { y: "center" }) });
+    };
+    window.addEventListener("ide-mcp-scroll", handler);
+    return () => window.removeEventListener("ide-mcp-scroll", handler);
+  }, []);
 
   const isRepo = useGitStore((s) => s.isRepo);
   const workspaceRoot = useEditorStore((s) => s.workspaceRoot);

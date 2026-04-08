@@ -35,6 +35,7 @@
 - [x] Move the pill bars to bottom of page (output boxes are above pillbars, and code editor above that)
 - [x] Move the + button and projects to the bottom of the rail growing from the bottom up (flipping the UI)
 - [x] Show no pills by default
+- [ ] Docking collapsed pills doesn't work (need to expand first then dock — should handle all edge cases: dock-while-collapsed, drag collapsed to dock zone, etc.)
 - [ ] Allow for splitting tabs out of code editor into multiple panes (similar to pillbar panels)
 - [ ] Show hints for dropping code editor tabs and pillbars as well
 - [x] Save open files & layout in session storage
@@ -63,6 +64,7 @@
 - [ ] Shows 2 white bars on terminal load that disapear when clicking inside output panel
 
 # Claude
+- [ ] Sending a prompt when Claude is first opened doesn't work (first message after opening is dropped/ignored)
 - [x] Interruptions cause conversation loss
 - [x] Add interactive elements in output panel for certain things (like if questions are asked that need answered, plan mode/normal mode, approving edits and leaving plan mode)
 - [x] Context tracking is way off (will show I am at 15000k/1000k of tokens)
@@ -90,8 +92,94 @@
 - [x] If file is edited while open (by a different process like claude) it does not show until close and reopen
 - [x] Need more language support (Language servers???)
 
+# Claude-IDE Deep Integration (MCP)
+
+Internal MCP HTTP server (axum) inside Tauri, auto-injected into Claude CLI. ~45 IDE control tools.
+
+```
+Claude CLI ──HTTP──▶ Axum MCP (127.0.0.1:{port}) ──▶ Tauri event ──▶ React handler
+```
+
+## Phase 1: MCP Server Infrastructure — DONE
+- [x] Add `axum`, `uuid` deps to `src-tauri/Cargo.toml`
+- [x] Create `src-tauri/src/ide_mcp.rs` — axum MCP server (initialize, tools/list, tools/call, oneshot bridge, 30s timeout)
+- [x] Wire into `src-tauri/src/lib.rs` — mod, setup, managed state, commands
+- [x] Update `src/store/mcpStore.ts` — auto-inject `acode-ide` in `writeClaudeConfigFile()`
+- [x] Create `src/services/ideMcpHandler.ts` — frontend event dispatcher (all tools routed)
+- [x] Initialize handler in `src/App.tsx`
+
+## Phase 2: Core Editor & Sidebar Tools — DONE (definitions + dispatch)
+- [x] `open_file`, `close_file`, `switch_tab`, `list_open_files`, `get_active_file`
+- [x] `show_hex_editor`, `show_text_editor`, `show_markdown_preview`
+- [x] `highlight_lines` (dispatches DOM event), `scroll_to_line` (dispatches DOM event)
+- [x] Wire `highlight_lines` into CodeMirror (EditorPane listen for `ide-mcp-highlight`, apply decorations)
+- [x] Wire `scroll_to_line` into CodeMirror (EditorPane listen for `ide-mcp-scroll`, scrollIntoView)
+- [x] `show_diff`, `switch_sidebar_tab`, `toggle_sidebar`
+- [x] `expand_folder`, `collapse_folder`, `reveal_in_explorer`, `refresh_explorer`
+
+## Phase 3: Terminal Tools — DONE (definitions + dispatch)
+- [x] `create_terminal`, `run_command`, `get_terminal_output`, `get_terminal_cwd`, `close_terminal`
+
+## Phase 4: Git Tools — DONE (definitions + dispatch via frontend stores)
+- [x] `git_stage`, `git_unstage`, `git_commit`, `git_status`, `git_diff_file`
+- [x] `git_log`, `git_branches`, `git_checkout`, `git_create_branch`, `git_push`, `git_pull`
+- [ ] Emit Tauri event after git ops so frontend auto-refreshes gitStore
+
+## Phase 5: Pill & Layout Management Tools — DONE (definitions + dispatch)
+- [x] `list_pills`, `create_pill`, `close_pill`, `focus_pill`, `expand_pill`, `collapse_pill`
+- [x] `dock_pill`, `float_pill`, `resize_pill`, `move_pill`
+
+## Phase 6: Project Management Tools — DONE (definitions + dispatch)
+- [x] `list_projects`, `get_active_project`, `switch_project`, `open_project`, `close_project`
+- [x] `transfer_pill` (basic: updates projectPath)
+- [x] Enhanced pill transfer: graceful terminal CWD change (waits for running command, then `cd`)
+- [x] Enhanced pill transfer: update Claude session key in claudeStore
+- [x] Enhanced pill transfer: handle active key switching across projects
+
+## Phase 7: Claude Pill Tools (Meta) — DONE (definitions + dispatch)
+- [x] `create_claude_pill`, `send_prompt`, `close_claude_pill`, `get_claude_messages`
+- [ ] Add recursion guard: reject `send_prompt` targeting the calling session
+
+## Phase 8: Live Edit Visualization — DONE
+- [x] Detect `Edit`/`Write`/`MultiEdit` tool_use in `claudeStore.processStreamChunk`
+- [x] Add `pendingFileEdits` to `ClaudeProjectState`
+- [x] On `tool_result`, trigger animated reload
+- [x] Add `reloadFileAnimated(path, editInfo)` to editorStore
+- [x] Create `src/components/editor/EditAnimation.ts` — CodeMirror ViewPlugin
+  - Green highlight on added lines, red flash on removed, fade out ~1.5s
+  - `Edit`: highlight changed region only; `Write`: flash then highlight diff
+
+## Phase 9: Notifications & State Query Tools — PARTIAL
+- [x] `show_notification`, `get_editor_state`
+- [ ] `get_settings` — read IDE settings
+- [ ] `update_setting` — change a setting
+
+## Verification
+- [ ] Smoke: `acode-ide` appears in Claude's MCP tools list
+- [ ] Ask Claude to "open src/App.tsx" — tab appears
+- [ ] Ask Claude to "run `ls` in a new terminal" — pill + command executes
+- [ ] Ask Claude to "dock terminal, float chat" — positions change
+- [ ] Ask Claude to "show diff for changed file" — diff viewer opens
+- [ ] Ask Claude to edit a file — highlight animation appears (Phase 8)
+- [ ] Ask Claude to "switch to project X" — switches with session preservation
+- [ ] Ask Claude to "move terminal to other project" — pill transfers
+
+## Files Created/Modified
+| File | Status |
+|------|--------|
+| `src-tauri/Cargo.toml` | Modified — added axum, uuid |
+| `src-tauri/src/ide_mcp.rs` | **Created** — MCP server (~580 lines) |
+| `src-tauri/src/lib.rs` | Modified — mod, setup, commands |
+| `src/store/mcpStore.ts` | Modified — auto-inject acode-ide |
+| `src/services/ideMcpHandler.ts` | **Created** — frontend dispatcher (~420 lines) |
+| `src/App.tsx` | Modified — init handler |
+| `src/store/claudeStore.ts` | Modified — Phase 8 (pendingFileEdits, Edit/Write detection) |
+| `src/store/editorStore.ts` | Modified — Phase 8 (reloadFileAnimated) |
+| `src/components/editor/EditAnimation.ts` | **Created** — Phase 8 (CodeMirror animation extension) |
+| `src/components/editor/EditorPane.tsx` | Modified — Phase 8 (animation wiring) |
+
 # Future / Nice-to-Have
 - [ ] Consider Tauri isolation pattern for IPC security (sandboxed iframe intercepts all IPC with AES-GCM encryption)
 - [ ] Add cargo-audit to CI for Rust dependency security auditing
 - [ ] Reduce tokio features from "full" to only what's needed (grants unnecessary functionality)
-- [ ] Use session IDs based on UUID instead of incrementing counter (collision risk on store recreation)
+- [x] Use session IDs based on UUID instead of incrementing counter (collision risk on store recreation)

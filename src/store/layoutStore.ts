@@ -35,9 +35,8 @@ export interface Project {
   iconUrl?: string;
 }
 
-let _nextSessionId = 1;
 export function genSessionId(): string {
-  return `pill-${_nextSessionId++}`;
+  return crypto.randomUUID();
 }
 
 interface LayoutStore {

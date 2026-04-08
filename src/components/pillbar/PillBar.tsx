@@ -1174,8 +1174,12 @@ export function PillBar() {
     undockPill(sessionId);
     // Initialize a floating position at the pill's old dock slot location with restored width
     if (container && slotIdx >= 0) {
-      const slot = getSlotRect(slotIdx, dockedCount, container.clientWidth, container.clientHeight);
-      initFloatingPosition(sessionId, slot.x, slot.y, restoredWidth);
+      const cW = container.clientWidth;
+      const maxW = cW - BOUND_PAD * 2;
+      const clampedWidth = Math.min(restoredWidth, Math.max(MIN_PILL_WIDTH, maxW));
+      const slot = getSlotRect(slotIdx, dockedCount, cW, container.clientHeight);
+      const clamped = clampPosition(slot.x, slot.y, clampedWidth, cW, container.clientHeight);
+      initFloatingPosition(sessionId, clamped.x, clamped.y, clampedWidth);
     }
   }, [undockPill, initFloatingPosition, pillBar.dockedSlots, pillBar.preDockWidths]);
 

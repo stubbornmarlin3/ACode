@@ -1,4 +1,7 @@
+#![recursion_limit = "256"]
+
 mod git;
+mod ide_mcp;
 mod mcp;
 
 use base64::Engine;
@@ -193,6 +196,10 @@ fn read_dir_recursive(dir: &Path, depth: u32, max_depth: u32) -> Vec<FileEntry> 
 
     for item in items {
         let name = item.file_name().to_string_lossy().to_string();
+
+        if name == ".acode" {
+            continue;
+        }
 
         let path = item.path();
         let is_dir = path.is_dir();
@@ -1314,6 +1321,8 @@ pub fn run() {
             git::github::github_logout,
             watch_directory,
             unwatch_directory,
+            ide_mcp::get_ide_mcp_port,
+            ide_mcp::ide_mcp_respond,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main")
@@ -1340,6 +1349,22 @@ pub fn run() {
                     eprintln!("Warning: failed to remove decorations: {e}");
                 }
             }
+
+            // Start the IDE MCP server for Claude integration
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match ide_mcp::start_mcp_server(app_handle.clone()).await {
+                    Ok(port) => {
+                        app_handle.manage(Arc::new(ide_mcp::IdeMcpState { port }));
+                        eprintln!("IDE MCP server listening on 127.0.0.1:{}", port);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to start IDE MCP server: {}", e);
+                        // Manage a fallback state so get_ide_mcp_port doesn't panic
+                        app_handle.manage(Arc::new(ide_mcp::IdeMcpState { port: 0 }));
+                    }
+                }
+            });
 
             Ok(())
         })
